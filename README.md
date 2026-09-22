@@ -1,5 +1,7 @@
 # Jarvis – AI Voice Assistant
 
+[![CI](https://github.com/rajaryan1111/jarvis-assistant/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rajaryan1111/jarvis-assistant/actions/workflows/ci.yml)
+
 **Developer:** Raj Aryan  
 **Platform:** macOS (Python + Web HUD)
 
