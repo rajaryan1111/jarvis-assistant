@@ -698,3 +698,8 @@ If you like this project:
 🧑‍💻 Share it with friends and on social media
 
 🎥 Record and share a demo video of your JARVIS in action
+
+
+---
+
+**Project documentation:** [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
