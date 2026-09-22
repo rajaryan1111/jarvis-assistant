@@ -5,7 +5,7 @@
 
 Jarvis is an advanced desktop AI assistant with a futuristic HUD inspired by Iron Man.
 
-[![Platform](https://img.shields.io/badge/platform-macOS-black)](https://github.com/a1creator284/jarvis-assistant)
+[![Platform](https://img.shields.io/badge/platform-macOS-black)](https://github.com/rajaryan1111/jarvis-assistant)
 [![Python](https://img.shields.io/badge/Python-3.x-blue)](https://www.python.org/)
 
 ### At a glance
@@ -596,7 +596,7 @@ CRICKET_API_KEY=your_cricketdata_key_here
 1. Clone the Repository
 bash
 Copy code
-git clone https://github.com/a1creator284/jarvis-assistant.git
+git clone https://github.com/rajaryan1111/jarvis-assistant.git
 cd jarvis-assistant
 2. Create and Activate Virtual Environment
 bash
