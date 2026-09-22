@@ -3,7 +3,22 @@
 **Developer:** Raj Aryan  
 **Platform:** macOS (Python + Web HUD)
 
-Jarvis is an advanced desktop AI assistant with a futuristic HUD inspired by Iron Man.  
+Jarvis is an advanced desktop AI assistant with a futuristic HUD inspired by Iron Man.
+
+[![Platform](https://img.shields.io/badge/platform-macOS-black)](https://github.com/a1creator284/jarvis-assistant)
+[![Python](https://img.shields.io/badge/Python-3.x-blue)](https://www.python.org/)
+
+### At a glance
+
+- **Voice:** wake-word interaction, speech recognition and macOS text-to-speech.
+- **Vision:** face, hand-gesture and person-detection utilities.
+- **RAG:** local notes/PDF knowledge retrieval through a vector index.
+- **Automation:** reminders, study planning and macOS system controls.
+- **HUD:** browser-based control surface backed by a local Python server.
+
+> **Privacy note:** personal face images, memory data and API credentials are intended to remain local and are excluded from source control via the project's ignore rules.
+
+  
 It combines **voice**, **vision**, **reminders**, **study planner**, **security mode**,  
 and **system control** into one personal AI control center.
 
