@@ -12,12 +12,18 @@ env/
 __pycache__/
 *.py[cod]
 
-# App data
+# Generated / local application data
 faces/
 memory.json
+knowledge_index.json
+knowledge_docs/*.pdf
 screenshot_*.png
+
+# Generated model / evaluation artefacts
+models/
+datasets/*.csv
+results/*.png
 
 # macOS + editor
 .DS_Store
 .vscode/
-
