@@ -176,6 +176,7 @@ All of these are enforced by the runtime and covered by tests. The first six can
 | tool output shown to the model | 1 500 chars per result | the `data` field is dropped and the result is marked `truncated`; the message is clipped if still too long |
 | conversation size | 24 000 chars | `limit_reached` |
 | model output | 400 tokens per turn | — |
+| tokens per run (input + output, as reported by the provider; M2.1) | 30 000 | `limit_reached` |
 | objective length | 2 000 chars | refused |
 
 **Stopping.** Saying or typing "cancel" (or "abort", "never mind") stops the caller's own runs, and the HUD's `/cancel`
@@ -190,7 +191,7 @@ except such a finishing tool thread. In the CLI, Ctrl-C cancels.
 **Nothing crashes the caller.** The following all end in a report with status `failed` and a plain
 explanation, never an exception:
 
-- provider errors (timeout, unavailable, rejected, not configured, malformed response)
+- provider errors (timeout, unavailable, rate limited (M2.1), rejected, not configured, malformed response)
 - an empty model turn
 - an exception raised by a tool
 - an internal bug in a run
@@ -311,7 +312,9 @@ The M1.2 set (24) was re-run against the new code and all 24 were caught again.
 
 ## 12. Limitations and deferred work
 
-- **Not verified with a real model.** All tests use a scripted model. How well a real model follows the
+- **Not verified with a real model.** All tests use a scripted model. (M2.1 adds wire-level tests against the
+  real SDK and an opt-in live test. See [M2_1_REAL_MODEL_VALIDATION.md](M2_1_REAL_MODEL_VALIDATION.md) for
+  what has and has not been run.) How well a real model follows the
   rules, picks tools and cites evidence was not measured. The safety properties do not depend on it,
   since the runtime enforces them, but answer quality does. Models without tool calling get `rejected`.
 - **macOS not verified here.** The tests ran on Linux (Python 3.11 locally, 3.10–3.13 in CI). The macOS

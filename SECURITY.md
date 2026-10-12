@@ -23,6 +23,9 @@ Do not commit API keys, private screenshots, face images, personal recordings, o
   passes the same policy/approval/audit, the model can never approve or see confirmation codes, and
   web/news content cannot trigger actions without HUD approval:
   [docs/M2_0_AGENT_LOOP.md](docs/M2_0_AGENT_LOOP.md).
+- What the agent sends to OpenAI, provider error handling, safe diagnostics and the opt-in live test:
+  [docs/M2_1_REAL_MODEL_VALIDATION.md](docs/M2_1_REAL_MODEL_VALIDATION.md). Logs never contain keys, bearer
+  tokens, cookies, prompts or tool results.
 - Voice is not identity: spoken requests can never approve a high-impact action; only a signed-in HUD
   session can. The local tokens do not protect against someone who controls your OS account.
 - Before committing, run `uv run python -m ultron check-secrets` (CI runs it too).

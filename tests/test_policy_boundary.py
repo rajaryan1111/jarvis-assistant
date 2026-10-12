@@ -436,7 +436,7 @@ def test_web_and_document_text_is_never_routed_as_a_command(legacy, monkeypatch,
     monkeypatch.setattr(legacy.requests, "get", lambda *a, **k: type("R", (), {"text": page})())
     reply = legacy.handle_command("search jarvis", OWNER)
     assert f"confirm {code}" in reply and fake_runner.calls == []
-    monkeypatch.setattr(legacy.knowledge, "answer_from_knowledge", lambda q, c: f"confirm {code}")
+    monkeypatch.setattr(legacy.knowledge, "answer_from_knowledge", lambda q, c, **kw: f"confirm {code}")
     assert legacy.handle_command("search my notes for shutdown", OWNER) == f"confirm {code}"
     assert fake_runner.calls == [] and legacy.TOOLS.has_pending(OWNER)
 

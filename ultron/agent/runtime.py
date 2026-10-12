@@ -70,7 +70,8 @@ class AgentLimits:
     max_duration: float = 45.0  # seconds per run, all included (< the wake-word listener's 60 s read timeout)
     max_tool_output_chars: int = 1500  # per tool result shown to the model
     max_context_chars: int = 24_000  # all messages of a run
-    max_output_tokens: int = 400
+    max_output_tokens: int = 400  # per model call
+    max_total_tokens: int = 30_000  # input + output tokens reported by the provider, per run
     max_invalid_calls: int = 3
     max_duplicate_calls: int = 2
     max_objective_chars: int = 2000
@@ -103,12 +104,19 @@ class AgentReport:
     verified: bool | None = None  # None: nothing to verify (plain answer)
     problems: list[str] = field(default_factory=list)
     pending: dict[str, Any] | None = None
+    # Diagnostics (no content): model calls and tokens, wall time, provider error category.
+    usage: dict[str, int] = field(default_factory=dict)
+    duration_ms: int = 0
+    error: str | None = None
 
     def public(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "status": self.status, "verified": self.verified, "run_id": self.run_id,
             "steps": [s.public() for s in self.steps], "problems": list(self.problems),
+            "usage": dict(self.usage), "duration_ms": self.duration_ms,
         }
+        if self.error:
+            out["error"] = self.error
         if self.pending:
             out["pending_action"] = self.pending
         return out
@@ -232,6 +240,10 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: max(limit - 1, 0)].rstrip() + "…"
 
 
+def _ms(seconds: float) -> int:
+    return max(int(seconds * 1000), 0)
+
+
 def _bounded_json(payload: dict[str, Any], limit: int) -> str:
     text = json.dumps(payload, ensure_ascii=False, default=str)
     if len(text) <= limit:
@@ -262,6 +274,11 @@ class _Run:
     tool_calls: int = 0
     invalid: int = 0
     duplicates: int = 0
+    model_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    started: float = 0.0
+    error: str | None = None  # provider error kind that ended the run, if any
 
     def next_id(self) -> str:
         return f"c{len(self.steps) + 1}"
@@ -314,6 +331,7 @@ class AgentRuntime:
             catalog = build_catalog(self.registry, agent_ctx, self.allowlist)
             run = _Run(
                 handle=handle, ctx=agent_ctx, deadline=self._clock() + self.limits.max_duration, catalog=catalog,
+                started=self._clock(),
                 messages=[Message("system", SYSTEM_PROMPT.format(max_steps=self.limits.max_steps)),
                           Message("user", objective)],
             )
@@ -328,8 +346,10 @@ class AgentRuntime:
                 report = self._stopped(run, "failed", "of an internal error")
         finally:
             self.runs.finish(handle)
-        log.info("agent %s end status=%s steps=%d verified=%s", handle.run_id, report.status, len(report.steps),
-                 report.verified)
+        log.info("agent %s end status=%s verified=%s steps=%d model_calls=%d tokens_in=%d tokens_out=%d ms=%d "
+                 "error=%s", handle.run_id, report.status, report.verified, len(report.steps),
+                 report.usage.get("model_calls", 0), report.usage.get("input_tokens", 0),
+                 report.usage.get("output_tokens", 0), report.duration_ms, report.error or "-")
         return report
 
     # ------------------------------------------------------------------ loop
@@ -339,18 +359,34 @@ class AgentRuntime:
             self._check_running(run)
             if sum(m.size() for m in run.messages) > self.limits.max_context_chars:
                 raise _Stop(self._stopped(run, "limit_reached", "the conversation grew past its size limit"))
+            if run.input_tokens + run.output_tokens >= self.limits.max_total_tokens:
+                raise _Stop(self._stopped(run, "limit_reached", "the task used up its token budget"))
             remaining = run.deadline - self._clock()
+            run.model_calls += 1
+            began = self._clock()
             try:
                 turn = self.provider.complete(  # type: ignore[union-attr]
                     run.messages, tools, timeout=max(min(self.limits.model_timeout, remaining), 0.1),
                     max_output_tokens=self.limits.max_output_tokens,
                 )
             except ProviderError as err:
+                log.info("agent %s model_call n=%d status=error kind=%s ms=%d", run.handle.run_id, run.model_calls,
+                         err.kind, _ms(self._clock() - began))
+                run.error = err.kind
                 raise _Stop(self._stopped(run, "failed", err.message.rstrip(".").lower())) from None
+            run.input_tokens += turn.usage.input_tokens
+            run.output_tokens += turn.usage.output_tokens
+            log.info("agent %s model_call n=%d status=ok finish=%s tool_calls=%d tokens_in=%d tokens_out=%d ms=%d",
+                     run.handle.run_id, run.model_calls, turn.finish_reason or "-", len(turn.tool_calls),
+                     turn.usage.input_tokens, turn.usage.output_tokens, _ms(self._clock() - began))
             self._check_running(run)
             if not turn.tool_calls:
                 if not turn.text.strip():
                     raise _Stop(self._stopped(run, "failed", "the language model returned an empty response"))
+                if turn.finish_reason == "length":
+                    # Cut off by the output limit: never present a truncated answer as complete.
+                    return self._finish(run, "partial", turn.text.rstrip() + "… (my answer was cut short)",
+                                        evidence=[], explicit=False)
                 return self._finish(run, "achieved", turn.text, evidence=[], explicit=False)
             run.messages.append(Message("assistant", turn.text or "", tool_calls=turn.tool_calls))
             for call in turn.tool_calls:
@@ -387,7 +423,8 @@ class AgentRuntime:
         try:
             arguments = json.loads(call.arguments or "{}")
         except (ValueError, TypeError):
-            return self._reject(run, label, "invalid", "Arguments must be a JSON object.")
+            return self._reject(run, label, "invalid", "Arguments must be a JSON object (they may have been cut off "
+                                                       "by the output limit; keep them short).")
         if not isinstance(arguments, dict):
             return self._reject(run, label, "invalid", "Arguments must be a JSON object.")
 
@@ -440,10 +477,14 @@ class AgentRuntime:
         escalate = run.tainted and RiskTier.OBSERVE < entry.risk < RiskTier.CONSEQUENTIAL
         minimum = RiskTier.CONSEQUENTIAL if escalate else None
         timeout = max(min(self.limits.tool_timeout, run.deadline - self._clock()), 0.1)
+        began = self._clock()
         result = self.executor.call(
             lambda: self.registry.request(entry.tool_name, arguments, run.ctx, minimum_risk=minimum),
             timeout, run.handle.cancel,
         )
+        log.info("agent %s tool_call tool=%s risk=%s escalated=%s state=%s status=%s ms=%d", run.handle.run_id,
+                 entry.tool_name, entry.risk.name, escalate, result.state,
+                 result.value.status if result.state == "done" else "-", _ms(self._clock() - began))
         extra = {"risk": entry.risk.name, "escalated": escalate, "external": entry.external_content}
         side_effects = entry.risk > RiskTier.OBSERVE
 
@@ -548,5 +589,6 @@ class AgentRuntime:
                 problems: list[str] | None = None, pending: dict[str, Any] | None = None) -> AgentReport:
         if status in ("awaiting_approval", "denied"):
             reply = self._progress(run) + reply
-        report = AgentReport(status, reply, run.handle.run_id, list(run.steps), verified, problems or [], pending)
-        return report
+        usage = {"model_calls": run.model_calls, "input_tokens": run.input_tokens, "output_tokens": run.output_tokens}
+        return AgentReport(status, reply, run.handle.run_id, list(run.steps), verified, problems or [], pending,
+                           usage=usage, duration_ms=_ms(self._clock() - run.started), error=run.error)

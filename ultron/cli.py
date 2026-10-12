@@ -271,6 +271,11 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     for name, configured in credential_status().items():
         state = "configured" if configured else "not set (feature disabled)"
         print(f"[{'ok' if configured else '--'}]   {name}: {state}")
+    from ultron.config import load_agent_config, load_chat_model
+
+    agent = load_agent_config()
+    print(f"[--]   models: chat={load_chat_model()} agent={agent.model} "
+          f"(agent loop {'on' if agent.enabled else 'off'}; live check: docs/M2_1_REAL_MODEL_VALIDATION.md)")
 
     print("Optional features:")
     for label, modules, extra in (

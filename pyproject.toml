@@ -55,6 +55,9 @@ include = ["ultron*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+markers = [
+    "live: calls the real OpenAI API; opt-in with ULTRON_LIVE_OPENAI=1 (see docs/M2_1_REAL_MODEL_VALIDATION.md)",
+]
 
 [tool.ruff]
 target-version = "py310"

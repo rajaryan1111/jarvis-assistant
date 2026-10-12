@@ -818,7 +818,8 @@ def test_openai_adapter_sends_tools_and_parses_tool_calls():
     assert client.options == {"timeout": 7, "max_retries": 0}
     kwargs = completions.kwargs
     assert kwargs["model"] == "test-model" and kwargs["parallel_tool_calls"] is False
-    assert kwargs["tools"][0]["function"]["name"] == "finish" and kwargs["max_tokens"] == 99
+    assert kwargs["tools"][0]["function"]["name"] == "finish" and kwargs["max_completion_tokens"] == 99
+    assert "max_tokens" not in kwargs  # deprecated; rejected by reasoning models
 
 
 def test_openai_adapter_round_trips_tool_messages():
@@ -842,7 +843,7 @@ def _openai_error(name):
 
 
 @pytest.mark.parametrize("name,kind", [
-    ("APITimeoutError", "timeout"), ("APIConnectionError", "unavailable"), ("RateLimitError", "unavailable"),
+    ("APITimeoutError", "timeout"), ("APIConnectionError", "unavailable"), ("RateLimitError", "rate_limited"),
     ("AuthenticationError", "not_configured"), ("BadRequestError", "rejected"),
 ])
 def test_openai_adapter_maps_errors_without_leaking_details(name, kind, caplog):

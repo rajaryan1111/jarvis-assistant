@@ -49,7 +49,7 @@ class CredentialSpec:
 CREDENTIALS: dict[str, CredentialSpec] = {
     spec.name: spec
     for spec in (
-        CredentialSpec("OPENAI_API_KEY", "OpenAI", "LLM replies, knowledge-base answers and study plans"),
+        CredentialSpec("OPENAI_API_KEY", "OpenAI", "agent loop, LLM replies, knowledge-base answers and study plans"),
         CredentialSpec("WEATHER_API_KEY", "OpenWeather", "weather reports"),
         CredentialSpec("NEWS_API_KEY", "NewsAPI", "news headlines"),
         CredentialSpec("CRICKET_API_KEY", "CricketData", "live cricket scores"),
@@ -220,8 +220,33 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
 
 # ----------------------------------------------------------------------------- agent loop (M2.0)
-DEFAULT_AGENT_MODEL = "gpt-4.1-mini"  # the model the legacy chat fallback already used
+# The one place a default model name lives. Override with ULTRON_CHAT_MODEL (single-shot
+# chat, study plans, knowledge answers) and/or ULTRON_AGENT_MODEL (agent loop; defaults to
+# the chat model). The agent model must support Chat Completions function calling.
+DEFAULT_CHAT_MODEL = "gpt-4.1-mini"
+DEFAULT_AGENT_MODEL = DEFAULT_CHAT_MODEL
 _AGENT_MODEL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-")
+# The shared OpenAI client (main.client): bounded instead of the SDK's 600 s / 2 retries.
+# The agent overrides both per call (its own timeout, no retries).
+OPENAI_CLIENT_TIMEOUT = 30.0
+OPENAI_CLIENT_MAX_RETRIES = 1
+
+
+def _model_name(env: Mapping[str, str], name: str, default: str) -> str:
+    import logging
+
+    model = (env.get(name) or "").strip()
+    if not model:
+        return default
+    if len(model) > 100 or not set(model) <= _AGENT_MODEL_CHARS:
+        logging.getLogger("ultron.config").warning("%s is not a valid model name; using %s", name, default)
+        return default
+    return model
+
+
+def load_chat_model(env: Mapping[str, str] | None = None) -> str:
+    """Model for the single-shot OpenAI calls (``ULTRON_CHAT_MODEL``)."""
+    return _model_name(os.environ if env is None else env, "ULTRON_CHAT_MODEL", DEFAULT_CHAT_MODEL)
 
 
 @dataclass(frozen=True)
@@ -257,10 +282,7 @@ def load_agent_config(env: Mapping[str, str] | None = None) -> AgentConfig:
             return default
         return cast(min(max(value, low), high))
 
-    model = (env.get("ULTRON_AGENT_MODEL") or "").strip() or DEFAULT_AGENT_MODEL
-    if len(model) > 100 or not set(model) <= _AGENT_MODEL_CHARS:
-        log.warning("ULTRON_AGENT_MODEL is not a valid model name; using %s", DEFAULT_AGENT_MODEL)
-        model = DEFAULT_AGENT_MODEL
+    model = _model_name(env, "ULTRON_AGENT_MODEL", load_chat_model(env))
     return AgentConfig(
         enabled=_flag(env, "ULTRON_AGENT", default=True),
         model=model,

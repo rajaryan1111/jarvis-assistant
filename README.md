@@ -70,11 +70,15 @@ echo "ULTRON_HAND_LANDMARKER_MODEL=$PWD/models/hand_landmarker.task" >> .env
 
    | Variable | Provider | Used for |
    |---|---|---|
-   | `OPENAI_API_KEY` | OpenAI | LLM replies, knowledge-base answers, study plans |
+   | `OPENAI_API_KEY` | OpenAI | agent loop, LLM replies, knowledge-base answers, study plans |
    | `WEATHER_API_KEY` | OpenWeather | weather |
    | `NEWS_API_KEY` | NewsAPI | headlines (sent in the `X-Api-Key` header, never in URLs) |
    | `CRICKET_API_KEY` | CricketData | live scores |
    | `PICOVOICE_ACCESS_KEY` | Picovoice | wake-word listener |
+
+   Models: `ULTRON_CHAT_MODEL` (default `gpt-4.1-mini`) and `ULTRON_AGENT_MODEL` (defaults to the chat model;
+   must support Chat Completions function calling). `uv run ultron doctor` shows both. Without a key,
+   everything except the language-model features keeps working.
 
 2. **Local API token (required for the HUD).** This token authorises control of your computer through the
    local server. It is generated locally and stored **outside the repository** in a file only you can read:
@@ -130,6 +134,12 @@ tools. Each call goes through the same policy, approval and audit as everything 
 the recorded tool results support it. After reading web, news, weather or Wikipedia content, any action in
 that run needs your approval in the HUD. Settings (`ULTRON_AGENT_*`) and limitations:
 [docs/M2_0_AGENT_LOOP.md](docs/M2_0_AGENT_LOOP.md).
+
+**What goes to OpenAI:** your request text and the results of the tools used in that run. That can include
+your notes or reminders if the model lists them, plus weather, news and system status. It never includes
+keys, tokens, cookies, files, screenshots, audio or past conversations. A typical request is 2–4 model calls
+(roughly 4–10k tokens), and every run stops at 30k tokens. Details, costs and troubleshooting:
+[docs/M2_1_REAL_MODEL_VALIDATION.md](docs/M2_1_REAL_MODEL_VALIDATION.md).
 
 ## Security model
 
@@ -191,7 +201,14 @@ uv run python -m ultron check-secrets
 uv run python -m compileall -q -x '/\.venv/' .
 ```
 
-CI runs these on Python 3.10–3.13 (Ubuntu). The tests use fake command runners and temporary
+The normal suite never contacts OpenAI. The live tests (`tests/live/`) are skipped unless you opt in.
+They use your key and the real model on synthetic data only, and cost a few cents at most:
+
+```bash
+ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider
+```
+
+CI runs the normal checks on Python 3.10–3.13 (Ubuntu), never the live tests. The tests use fake command runners and temporary
 directories. They can't verify macOS behaviour (`say`, `osascript`, camera, microphone, TCC permissions).
 See the M1 report for what was verified where.
 
@@ -214,6 +231,10 @@ See the M1 report for what was verified where.
 | Restart/shutdown confirmed but nothing happens | Grant your terminal Automation permission for System Events (System Settings → Privacy & Security → Automation) |
 | "The assistant proposed this, so it needs your approval" | The task read outside content, or the action needs approval: press CONFIRM in the HUD |
 | "I couldn't verify that this was done" | The model claimed success but the tool results don't show it. Check, then ask again |
+| "rejected the configured credentials" | Wrong or revoked `OPENAI_API_KEY`: fix it in `.env` and restart |
+| "rate limited" / "no remaining quota" | Wait a minute / check billing in the OpenAI dashboard |
+| "The language model is unavailable right now" | No network, proxy/firewall, or an OpenAI outage |
+| "rejected the request (check ULTRON_AGENT_MODEL …)" | The model doesn't exist or can't do tool calls: use a tool-calling chat model |
 | A feature says its key is missing | Add it to `.env`. Run `uv run ultron doctor` to see which keys are set |
 
 ## Repository structure
@@ -236,7 +257,7 @@ news.py               NewsAPI integration
 wakeword_listener.py  optional Porcupine wake word
 jarvis_logic.py       thin wrapper around main.handle_command
 tests/                pytest suite
-docs/                 architecture audit, M1/M1.1/M1.2/M2.0 reports, credential rotation guide
+docs/                 architecture audit, M1/M1.1/M1.2/M2.0/M2.1 reports, credential rotation guide
 ```
 
 ## Limitations

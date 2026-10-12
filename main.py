@@ -21,7 +21,14 @@ import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heav
 import news
 from ultron.agent.provider import OpenAIChatProvider
 from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
-from ultron.config import get_credential, load_agent_config, load_dotenv_if_enabled
+from ultron.config import (
+    OPENAI_CLIENT_MAX_RETRIES,
+    OPENAI_CLIENT_TIMEOUT,
+    get_credential,
+    load_agent_config,
+    load_chat_model,
+    load_dotenv_if_enabled,
+)
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
@@ -48,7 +55,9 @@ NEWS_COUNTRY = os.getenv("NEWS_COUNTRY", "in")
 DEFAULT_WEATHER_CITY = os.getenv("WEATHER_CITY", "Delhi")
 CRICKET_API_KEY = get_credential("CRICKET_API_KEY")  # live cricket API key
 
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+CHAT_MODEL = load_chat_model()  # ULTRON_CHAT_MODEL; the agent uses AGENT_CONFIG.model
+client = (OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_CLIENT_TIMEOUT, max_retries=OPENAI_CLIENT_MAX_RETRIES)
+          if OPENAI_API_KEY else None)
 _recognizer = None  # created lazily; SpeechRecognition is an optional "voice" extra
 
 MEMORY_FILE = os.getenv("ULTRON_MEMORY_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory.json")
@@ -278,13 +287,14 @@ def ask_gpt(prompt: str, history):
         return "My OpenAI key is not configured."
     try:
         resp = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model=CHAT_MODEL,
             messages=history + [{"role": "user", "content": prompt}],
-            max_tokens=200,
+            max_completion_tokens=200,
         )
-        return resp.choices[0].message.content.strip()
+        return (resp.choices[0].message.content or "").strip() or "Sorry, I don't have an answer for that."
     except Exception as e:
-        print("GPT error:", e)
+        # Type only: provider messages can echo request details or part of the key.
+        print("GPT error:", type(e).__name__)
         return "Sorry, I am having trouble thinking right now."
 
 
@@ -1117,16 +1127,18 @@ def _tool_create_study_plan(topic: str) -> str:
     else:
         try:
             resp = client.chat.completions.create(
-                model="gpt-4.1-mini",
+                model=CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a helpful study planner."},
                     {"role": "user", "content": base_prompt},
                 ],
-                max_tokens=400,
+                max_completion_tokens=400,
             )
-            plan_text = resp.choices[0].message.content.strip()
+            plan_text = (resp.choices[0].message.content or "").strip()
+            if not plan_text:
+                raise ValueError("empty plan")
         except Exception as e:
-            print("Study planner GPT error:", e)
+            print("Study planner GPT error:", type(e).__name__)
             plan_text = (
                 f"Study plan for {topic} (fallback):\n"
                 "- Day 1: Learn basics.\n"
@@ -1723,7 +1735,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         q = q.strip()
         if not q:
             q = cmd  # fallback to full command
-        return knowledge.answer_from_knowledge(q, client)
+        return knowledge.answer_from_knowledge(q, client, model=CHAT_MODEL)
 
     # Reminders
     if "remind me" in cmd:

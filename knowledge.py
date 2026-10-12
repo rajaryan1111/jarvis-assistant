@@ -12,6 +12,7 @@ import json
 import math
 from pathlib import Path
 
+from ultron.config import DEFAULT_CHAT_MODEL
 from ultron.security.paths import atomic_write_text
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -218,7 +219,7 @@ def _load_index():
         return None
 
 
-def answer_from_knowledge(question: str, openai_client=None):
+def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAULT_CHAT_MODEL):
     """
     Use the prebuilt index + GPT (from main.py) to answer from personal notes.
     OFFLINE embeddings for retrieval, GPT for generation is still done in main.py.
@@ -288,17 +289,17 @@ def answer_from_knowledge(question: str, openai_client=None):
     # Use GPT via the provided client (same as before)
     try:
         resp = openai_client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model=model,  # main.py passes ULTRON_CHAT_MODEL
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=300,
+            max_completion_tokens=300,
         )
-        ans = resp.choices[0].message.content.strip()
+        ans = (resp.choices[0].message.content or "").strip()
         return ans
     except Exception as e:
-        print("[KB] GPT error:", e)
+        print("[KB] GPT error:", type(e).__name__)  # type only: messages can echo request details
         return (
             "I tried to answer from your notes, but my thinking module failed, sir. "
             "Here is the raw context I found:\n\n" + context
