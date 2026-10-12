@@ -179,9 +179,10 @@ Credential hygiene added in M2.2:
   in output.
 - **Secrets:** redaction by shape and by value, the scanner rule, test-session scrubbing, and live
   credential capture only when opted in.
-- **Fixes from the first real run (section 10):** `output_parse_failed` is treated as malformed generated
-  output and retried within the invalid-call and step limits; completed tools are not re-executed and no
-  provider error body leaks; other 400s and 429s are still not retried; every
+- **Fixes from the first real run (section 10):** `output_parse_failed` and `tool_use_failed` are treated as malformed generated
+  turns and retried within the invalid-call and step limits; recovery appends a user-role instruction rather than an
+  orphan tool-role message, preserves completed tool results and reminds the model to include the requested fact; no
+  completed tool is re-executed and no provider error body leaks; other 400s and 429s are still not retried; every
   way a run can end has its own stop reason (9 endings checked, including asking, answering without
   tools, invalid and malformed calls, output limit and empty response); the prompt's lookup-before-asking
   rule; asking is still required when no tool can supply the detail.
