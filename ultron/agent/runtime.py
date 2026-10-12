@@ -587,8 +587,9 @@ class AgentRuntime:
                 problems.append(f"the cited result {call_id} ({step.tool}) did not succeed")
         for index, step in enumerate(run.steps):
             later_success = any(s.tool == step.tool and s.status == "completed" for s in run.steps[index + 1:])
-            if (step.status in ("invalid", "refused") and step.tool not in (FINISH, ASK_USER, MALFORMED_CALL)
-                    and not later_success):
+            if (step.status in ("invalid", "refused") and step.tool not in (
+                    FINISH, ASK_USER, MALFORMED_CALL, MALFORMED_OUTPUT
+            ) and not later_success):
                 # The model tried something that was never run (unknown tool, bad arguments,
                 # refused): a success claim must not rest on it.
                 problems.append(f"{step.tool} was not run")
