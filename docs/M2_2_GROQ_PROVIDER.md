@@ -120,7 +120,7 @@ retention policy.
 | 401 `invalid_api_key`, 403 | `not_configured` | "…rejected the configured credentials (check GROQ_API_KEY)" |
 | 429 `rate_limit_exceeded` (requests or tokens per minute/day) | `rate_limited` | "…rate limited right now; try again in a minute" |
 | 400 `tool_use_failed` | `malformed_call` | Retried as above. After 3: "…kept proposing invalid tool calls" |
-| 400 `output_parse_failed` (seen in a real run; **not documented by Groq**) | `rejected` | "The Groq service could not parse the language model's output (output_parse_failed)". Not retried: see section 10 |
+| 400 `output_parse_failed` (seen in real runs; **not documented by Groq**) | `malformed_output` | Retried within the 3-invalid-call and step limits; arbitrary 400s remain rejected |
 | 400 (other), 404 `model_not_found`, 422 | `rejected` | "…rejected the request (check ULTRON_GROQ_MODEL supports tool calling)" |
 | 413 | `rejected` | "The request was too large for the language model" |
 | 498 (flex capacity), 500, 502, 503, network errors | `unavailable` | "…unavailable right now" |
@@ -179,8 +179,9 @@ Credential hygiene added in M2.2:
   in output.
 - **Secrets:** redaction by shape and by value, the scanner rule, test-session scrubbing, and live
   credential capture only when opted in.
-- **Fixes from the first real run (section 10):** `output_parse_failed` fails closed (one request, no
-  tool runs, no retry, nothing from the body leaks); other 400s and 429s are still not retried; every
+- **Fixes from the first real run (section 10):** `output_parse_failed` is treated as malformed generated
+  output and retried within the invalid-call and step limits; completed tools are not re-executed and no
+  provider error body leaks; other 400s and 429s are still not retried; every
   way a run can end has its own stop reason (9 endings checked, including asking, answering without
   tools, invalid and malformed calls, output limit and empty response); the prompt's lookup-before-asking
   rule; asking is still required when no tool can supply the detail.
@@ -234,7 +235,7 @@ test in the same session still runs without credentials (tested, and mutation-ch
 | "…rate limited right now" | Requests- or tokens-per-minute limit (free-tier limits are low). Wait, or reduce usage |
 | "ran out of output tokens before answering" | Reasoning used the whole limit. Raise `ULTRON_AGENT_MAX_OUTPUT_TOKENS` (e.g. 2048) or set `ULTRON_GROQ_REASONING_EFFORT=low` |
 | "kept proposing invalid tool calls" | The model repeatedly wrote broken tool calls (`tool_use_failed`). Retry, or try another model |
-| "…could not parse the language model's output (output_parse_failed)" | Groq could not parse what the model generated (undocumented code, section 10). Nothing ran. Retry the request; if it keeps happening, note the scenario and request id from the log |
+| `output_parse_failed` | One generated turn could not be parsed. ULTRON records a content-free invalid-output step and retries within the invalid-call and step limits. If it repeats, the run stops as failed; prior successful tools are not re-executed. |
 | Single-shot chat says the OpenAI key is missing | Expected with only a Groq key: only the agent loop uses Groq (section 2) |
 
 ## 9. Limitations
@@ -299,18 +300,18 @@ A separate `ultron agent` command called `time.now` and then got HTTP 429 `rate_
 
 - **Documentation check (2026-10-13):** `output_parse_failed` is **not documented** in Groq's errors
   page, API reference, tool-use guides or reasoning guide, and a web search found no Groq source. Groq
-  documents only `tool_use_failed` as "the model failed to generate a valid tool call" (with a
-  `failed_generation` field), for which it recommends a bounded retry.
-- **Decision:** the code's name suggests the same kind of model-output failure, but that is an inference,
-  not documented semantics. So it is **not** treated as retryable. It stays `rejected`: the run fails
-  closed after one request, nothing executes, and nothing is reported as success. Only its message
-  changed. The generic "check ULTRON_GROQ_MODEL supports tool calling" was misleading, since the same
-  model completed tool calls in the other scenarios. Groq's body, including any `failed_generation`, is
-  never read, logged or shown. Arbitrary 400s are still never retried.
-- **Consequence:** if Groq returns this code again, the failed-action scenario will fail again, now labelled
-  `error=rejected(output_parse_failed)`. That is an honest result, not a code bug to hide. If Groq
-  documents the code as a model-generation failure, it can be added next to `tool_use_failed` (bounded
-  by the same 3-invalid-calls and step limits) with a one-line change and the existing tests.
+  documents `tool_use_failed` as a malformed generated tool call. The exact semantics of
+  `output_parse_failed` remain unconfirmed.
+- **Decision:** repeated live runs returned this code on the second model turn after a completed tool,
+  with no usable tool call returned by the failing request. The code name suggests provider-side parsing
+  of generated output; that is an inference, not documented semantics. ULTRON now treats only this exact
+  code as a `malformed_output` turn and retries within the existing 3-invalid-call and step limits.
+  Arbitrary HTTP 400s remain `rejected` and are never retried. The provider body, including any
+  `failed_generation`, is never read, logged or shown.
+- **Safety properties:** no usable tool call was returned from the failed turn, so nothing from that turn
+  can execute. Any earlier successful tool remains in the ledger and is not re-executed. If this code
+  repeats three times, the run stops as failed; it never claims success without verification. Deterministic
+  tests cover recovery after one parse failure and stopping after repeated failures.
 - **Not investigated further:** Groq's docs show `name` on tool-result messages; ULTRON sends only
   `tool_call_id`, which is the OpenAI format. Full tool round trips passed in the real smoke and
   injection scenarios, so this is not a known cause.
