@@ -44,8 +44,9 @@ class FakeBackend:
     def status(self):
         return {"time": "12:00:00", "battery": 80}
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, ctx: CommandContext) -> str:
         self.spoken.append(text)
+        return "completed"
 
     def start_background(self) -> None:  # pragma: no cover - not used by the test client
         pass

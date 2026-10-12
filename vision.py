@@ -16,7 +16,11 @@ Install: ``uv sync --extra vision`` (or ``pip install -e '.[vision]'``).
 """
 
 import os
+import re
 import time
+from pathlib import Path
+
+from ultron.security.paths import PathPolicyError, atomic_replace, child_path, resolve_directory
 
 # OSError covers native-library failures (e.g. OpenCV needing libGL on a headless Linux box).
 try:  # optional dependency
@@ -29,7 +33,10 @@ try:  # optional dependency
 except (ImportError, OSError):  # pragma: no cover - depends on the environment
     mp = None
 
-FACE_DIR = "faces"
+# Anchored to the project directory (the launcher already runs from there, so existing
+# faces/raj.jpg files keep working) instead of whatever the current directory happens to be.
+FACE_DIR = os.getenv("ULTRON_FACE_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "faces")
+_FACE_NAME_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 HAND_MODEL_ENV = "ULTRON_HAND_LANDMARKER_MODEL"
 HAND_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
@@ -150,6 +157,14 @@ def _crop_face(frame):
 
 # ========= FACE "REGISTRATION" & MATCHING =========
 
+def _face_path(name: str, create_dir: bool = False) -> Path:
+    """Path of the stored face for ``name``: a plain name, inside FACE_DIR, never via a symlink."""
+    if not isinstance(name, str) or not _FACE_NAME_RE.match(name):
+        raise PathPolicyError("invalid face name")
+    directory = resolve_directory(FACE_DIR, create=create_dir, allow_symlink=False)
+    return child_path(directory, f"{name}.jpg")
+
+
 def register_face(name: str = "owner") -> bool:
     """
     Capture one frame from webcam and save as this user's face image.
@@ -163,15 +178,20 @@ def register_face(name: str = "owner") -> bool:
         return False
 
     try:
-        os.makedirs(FACE_DIR, mode=0o700, exist_ok=True)
+        path = _face_path(name, create_dir=True)
         face_region = _crop_face(frame)
         face_img = cv2.resize(face_region, (200, 200))
-        path = os.path.join(FACE_DIR, f"{name}.jpg")
-        cv2.imwrite(path, face_img)
-        print(f"[vision] Saved face image for {name} at {path}")
+
+        def _write(tmp_name: str) -> None:
+            if not cv2.imwrite(tmp_name, face_img):
+                raise OSError("could not encode the face image")
+
+        # Atomic: a failed capture/encode leaves the previous reference face untouched.
+        atomic_replace(path, _write)
+        print(f"[vision] Saved face image for {name}")
         return True
     except Exception as e:
-        print("[vision] Error while saving face:", e)
+        print("[vision] Error while saving face:", type(e).__name__, e if isinstance(e, PathPolicyError) else "")
         return False
 
 
@@ -184,14 +204,18 @@ def recognize_face(name: str = "owner", threshold: float = 20000.0):
     """
     if cv2 is None:
         return False, None
-    ref_path = os.path.join(FACE_DIR, f"{name}.jpg")
-    if not os.path.exists(ref_path):
+    try:
+        ref_path = _face_path(name)
+    except PathPolicyError as exc:
+        print(f"[vision] No usable stored face for {name}: {exc}.")
+        return False, None
+    if not ref_path.is_file():
         print(f"[vision] No stored face for {name}.")
         return False, None
 
-    ref_img = cv2.imread(ref_path)
+    ref_img = cv2.imread(str(ref_path))
     if ref_img is None:
-        print(f"[vision] Could not read stored face {ref_path}.")
+        print(f"[vision] Could not read stored face for {name}.")
         return False, None
 
     frame = _capture_frame_from_camera()

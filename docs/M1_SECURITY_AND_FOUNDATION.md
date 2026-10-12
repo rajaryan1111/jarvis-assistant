@@ -93,12 +93,11 @@ No test shuts anything down, deletes user files, reads real credentials or runs 
 - **Credentials remain in public Git history.** The Picovoice key was at `HEAD` until this branch, and the
   NewsAPI key is in older commits. Rotation is a manual owner action
   ([`SECURITY_CREDENTIAL_ROTATION.md`](SECURITY_CREDENTIAL_ROTATION.md)). History was not rewritten.
-- **Only registry tools are risk-gated.** Restart, shutdown, cache cleanup and clearing reminders are
-  gated. Other legacy routines (open apps/URLs, volume, brightness, screenshots, sleep, enabling or
-  disabling security mode) still run for any *authenticated* caller without confirmation. Moving them
-  into the registry is planned for M3.
-- **The face check is not authentication** (pixel distance, easy to spoof). Security mode can be turned
-  off by voice. The real boundary is the API token and session.
+- ~~**Only registry tools are risk-gated.**~~ **Resolved in M1.1:** every state-changing legacy action is now
+  a registered tool behind one policy boundary, and turning off security mode needs a confirmation that
+  passes the face gate. See [`M1_1_TOOL_SECURITY_BOUNDARY.md`](M1_1_TOOL_SECURITY_BOUNDARY.md).
+- **The face check is not authentication** (pixel distance, easy to spoof). The real boundary is the API
+  token and session.
 - **The bearer token is all-powerful.** Anyone who can read the token file (your user account) can control
   the assistant. No per-client scopes yet.
 - **Single-user design.** All bearer clients share one principal (`api-token`). HUD sessions are separate

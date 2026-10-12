@@ -15,4 +15,6 @@ Do not commit API keys, private screenshots, face images, personal recordings, o
 - Security model of the HUD/API server: see "Security model" in [README.md](README.md).
 - Exposed credentials and manual rotation steps: [docs/SECURITY_CREDENTIAL_ROTATION.md](docs/SECURITY_CREDENTIAL_ROTATION.md).
 - M1 remediation report and known limitations: [docs/M1_SECURITY_AND_FOUNDATION.md](docs/M1_SECURITY_AND_FOUNDATION.md).
+- Action/risk matrix, centralized authorization design, confirmation rules and manual macOS checks:
+  [docs/M1_1_TOOL_SECURITY_BOUNDARY.md](docs/M1_1_TOOL_SECURITY_BOUNDARY.md).
 - Before committing, run `uv run python -m ultron check-secrets` (CI runs it too).

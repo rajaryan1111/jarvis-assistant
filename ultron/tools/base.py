@@ -1,9 +1,12 @@
 """Tool interface and risk metadata.
 
 A tool is a narrow, explicit capability. It declares its risk tier and side
-effects up front so the registry can apply policy *before* it runs. Tools
-receive already-parsed arguments; they never parse free text or execute
-strings taken from documents or model output.
+effects up front so the registry can apply policy *before* it runs.
+
+Tools receive explicit arguments and validate them; they never execute strings
+taken from documents or model output. A few legacy data tools (reminders, smart
+home, study progress) receive the user's own command text and parse it with the
+same deterministic code as before — never with a model.
 """
 
 from __future__ import annotations
@@ -23,6 +26,10 @@ class ToolSpec:
     side_effects: frozenset[str] = frozenset()
     platforms: frozenset[str] | None = None  # e.g. {"darwin"}; None = any platform
     confirmation_ttl_seconds: int = 60
+    # Background services of this process (Channel.INTERNAL) may run this ROUTINE tool.
+    internal_ok: bool = False
+    # Words that identify this tool in a spoken confirmation ("confirm restart 1234").
+    confirm_hints: tuple[str, ...] = ()
 
 
 @dataclass

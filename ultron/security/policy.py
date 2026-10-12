@@ -8,6 +8,19 @@ Only *authenticated user channels* can authorise actions. Text that comes
 from web pages, documents, knowledge-base retrieval or LLM output is content,
 never authorisation: such text is never routed back into the command handler,
 and a context marked ``UNTRUSTED`` can never act or confirm.
+
+Decision table (see docs/M1_1_TOOL_SECURITY_BOUNDARY.md):
+
+==================  =========  =================  ======================  =========
+tier                untrusted  internal service   authenticated user      any
+==================  =========  =================  ======================  =========
+OBSERVE             allow      allow              allow
+ROUTINE             deny       allow only if the  allow (no prompt)
+                               tool opts in
+CONSEQUENTIAL       deny       deny               confirm
+DESTRUCTIVE         deny       deny               confirm
+FORBIDDEN                                                                 deny
+==================  =========  =================  ======================  =========
 """
 
 from __future__ import annotations
@@ -30,6 +43,7 @@ class Channel(str, Enum):
     API = "api"  # bearer-token API client
     LOCAL_VOICE = "local_voice"  # `python main.py` microphone loop on this machine
     WAKEWORD = "wakeword"  # wake-word listener using the bearer token
+    INTERNAL = "internal"  # background services in this process (reminder / intruder watchers)
     UNTRUSTED = "untrusted"  # anything else, including derived/retrieved content
 
 
@@ -49,6 +63,10 @@ class CommandContext:
     def can_authorize(self) -> bool:
         return self.authenticated and self.channel in USER_CHANNELS
 
+    @property
+    def is_internal(self) -> bool:
+        return self.channel is Channel.INTERNAL
+
     @classmethod
     def untrusted(cls, source: str = "unspecified") -> CommandContext:
         return cls(principal=f"untrusted:{source}", channel=Channel.UNTRUSTED, authenticated=False)
@@ -56,6 +74,11 @@ class CommandContext:
     @classmethod
     def local_voice(cls) -> CommandContext:
         return cls(principal="local-cli", channel=Channel.LOCAL_VOICE, authenticated=True)
+
+    @classmethod
+    def internal(cls, service: str) -> CommandContext:
+        """A background service of this process. It is not a user: it can never confirm anything."""
+        return cls(principal=f"internal:{service}", channel=Channel.INTERNAL, authenticated=False)
 
 
 class Decision(str, Enum):
@@ -70,11 +93,21 @@ class PolicyDecision:
     reason: str
 
 
-def evaluate(risk: RiskTier, ctx: CommandContext) -> PolicyDecision:
+def evaluate(risk: RiskTier, ctx: CommandContext, *, internal_ok: bool = False) -> PolicyDecision:
+    """Decide whether an action of ``risk`` may run for ``ctx``.
+
+    ``internal_ok`` is declared by the tool (``ToolSpec.internal_ok``): it lets a background
+    service of this process run that ROUTINE tool (e.g. speak a due reminder). Internal
+    services can never trigger anything that needs confirmation.
+    """
     if risk >= RiskTier.FORBIDDEN:
         return PolicyDecision(Decision.DENY, "This action is never allowed.")
     if risk == RiskTier.OBSERVE:
         return PolicyDecision(Decision.ALLOW, "Read-only action.")
+    if ctx.is_internal:
+        if risk == RiskTier.ROUTINE and internal_ok:
+            return PolicyDecision(Decision.ALLOW, "Background service action permitted by this tool.")
+        return PolicyDecision(Decision.DENY, "Background services cannot perform this action.")
     if not ctx.can_authorize:
         return PolicyDecision(
             Decision.DENY,

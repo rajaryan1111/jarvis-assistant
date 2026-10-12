@@ -217,6 +217,26 @@ def test_policy_tiers():
     assert evaluate(RiskTier.FORBIDDEN, user).decision is Decision.DENY
 
 
+def test_internal_services_get_only_opted_in_routine_actions():
+    internal = CommandContext.internal("reminder-watcher")
+    assert not internal.can_authorize and internal.is_internal
+    assert evaluate(RiskTier.OBSERVE, internal).decision is Decision.ALLOW
+    assert evaluate(RiskTier.ROUTINE, internal).decision is Decision.DENY
+    assert evaluate(RiskTier.ROUTINE, internal, internal_ok=True).decision is Decision.ALLOW
+    for tier in (RiskTier.CONSEQUENTIAL, RiskTier.DESTRUCTIVE, RiskTier.FORBIDDEN):
+        assert evaluate(tier, internal, internal_ok=True).decision is Decision.DENY
+    # Opting in means nothing for untrusted content.
+    assert evaluate(RiskTier.ROUTINE, CommandContext.untrusted("doc"), internal_ok=True).decision is Decision.DENY
+
+
+def test_confirmation_store_clear_invalidates_everyone():
+    store = ConfirmationStore()
+    store.create("a", {}, "alice", "x")
+    store.create("b", {}, "bob", "y")
+    assert store.clear() == 2
+    assert store.pending_for("alice") is None and store.pending_for("bob") is None
+
+
 def test_unauthenticated_user_channel_cannot_authorize():
     assert not CommandContext("x", Channel.HUD, authenticated=False).can_authorize
     assert not CommandContext("x", Channel.UNTRUSTED, authenticated=True).can_authorize

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ultron.config import Settings, is_placeholder
+from ultron.security.paths import atomic_write_text
 
 MIN_TOKEN_LENGTH = 32
 SETUP_HINT = "Run `python -m ultron token init` (or `uv run ultron token init`) to create one."
@@ -88,14 +89,6 @@ def write_token_file(path: Path, token: str | None = None, *, overwrite: bool = 
             pass
     if path.exists() and not overwrite:
         raise FileExistsError(str(path))
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(token + "\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    # Random O_EXCL temp name (never follows a planted symlink), mode 600, then rename.
+    atomic_write_text(path, token + "\n", mode=0o600)
     return path

@@ -7,7 +7,8 @@ A macOS-focused personal AI assistant that combines **voice interaction, vision,
 > This is a personal engineering project, not a production security product. Face recognition is a
 > prototype convenience feature, **not authentication**. The project is being evolved into
 > "ULTRON", a local-first computer-use agent. See [`docs/ULTRON_ARCHITECTURE_AUDIT.md`](docs/ULTRON_ARCHITECTURE_AUDIT.md)
-> and [`docs/M1_SECURITY_AND_FOUNDATION.md`](docs/M1_SECURITY_AND_FOUNDATION.md).
+> , [`docs/M1_SECURITY_AND_FOUNDATION.md`](docs/M1_SECURITY_AND_FOUNDATION.md)
+> and [`docs/M1_1_TOOL_SECURITY_BOUNDARY.md`](docs/M1_1_TOOL_SECURITY_BOUNDARY.md).
 
 ## Features
 
@@ -118,21 +119,32 @@ The assistant can control this computer, so the server is built to fail closed:
   defence) and rejects disallowed `Origin` values. It never sends CORS headers. State-changing browser
   requests need an allowed `Origin`/`Referer`, a per-session `X-CSRF-Token` and `Content-Type:
   application/json`. The cookie is `SameSite=Strict`. CORS is not treated as authorisation.
-- **Confirmation for destructive actions.** Restart, shut down, clearing user caches and deleting all
-  reminders are registered tools with a risk tier. Asking for one creates a *pending action* with a
-  one-time 4-digit code. It runs only after `confirm <code>` (or the HUD's confirm button) from the **same**
+- **One policy boundary for every action.** Every state-changing legacy action (apps, browser, volume,
+  brightness, screenshots, camera, memory, reminders, security mode, power, caches) is a registered tool
+  with a risk tier, and voice, CLI, HUD, API and background services all reach it through the same tool
+  registry. Read-only commands work for anyone. Routine actions run without prompts for an authenticated
+  user. See the [action/risk matrix](docs/M1_1_TOOL_SECURITY_BOUNDARY.md#action--risk-matrix).
+- **Confirmation for high-impact actions.** Turning off security mode, re-registering your face, deleting
+  all reminders, clearing user caches, restart and shut down create a *pending action* with a one-time
+  4-digit code. It runs only after `confirm <code>` (or the HUD's confirm button) from the **same**
   authenticated user, within 60 seconds. It is single use, and three wrong codes cancel it. A bare
-  "confirm shutdown" does nothing.
+  "confirm shutdown" does nothing. While security mode is on, the confirmation also needs the face check,
+  so turning the mode off can't skip it (owner recovery: `uv run ultron security disable` on the Mac).
 - **Untrusted content never authorises anything.** Commands without an authenticated context (such as
-  `jarvis_logic.handle_command(text)`), knowledge-base text and LLM output can't request or confirm
-  risk-checked actions, and LLM or document text is never executed.
+  `jarvis_logic.handle_command(text)` or a direct call to a helper in `main.py`) get read-only answers only.
+  Knowledge-base text, web pages and LLM output can't request or confirm actions and are never executed.
+- **Narrow processes and files.** Tools start processes only through one runner (argv lists, absolute
+  paths, timeouts, bounded and redacted output; no shell). They write files only inside their configured
+  folder, never through symlinks, and atomically.
 - **No secrets in the browser or logs.** Pages and JS contain only a per-session CSRF token. Log
   output passes through a redaction filter, and `uv run ultron check-secrets` scans files that could be
   committed for hardcoded credentials (CI runs it).
 - Security headers include a strict CSP (no inline script), `frame-ancestors 'none'`, `nosniff` and `no-store`.
 
-Known limits are listed in [`docs/M1_SECURITY_AND_FOUNDATION.md`](docs/M1_SECURITY_AND_FOUNDATION.md#remaining-risks-and-limitations).
-For example, legacy routine commands (opening apps, volume) are not yet risk-gated beyond requiring authentication.
+Known limits are listed in [`docs/M1_1_TOOL_SECURITY_BOUNDARY.md`](docs/M1_1_TOOL_SECURITY_BOUNDARY.md#limitations)
+and [`docs/M1_SECURITY_AND_FOUNDATION.md`](docs/M1_SECURITY_AND_FOUNDATION.md#remaining-risks-and-limitations).
+For example, the API token is all-powerful, voice is trusted like a logged-in user, and the face check is
+not authentication.
 
 ## Tests and checks
 

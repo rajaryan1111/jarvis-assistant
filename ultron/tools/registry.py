@@ -1,8 +1,12 @@
 """Tool registry: the single authorization boundary for sensitive operations.
 
 ``request`` -> policy decision -> run now | create pending confirmation | deny
-``confirm`` -> validate the pending action (principal, code/id, expiry, single use) -> run
+``confirm`` -> validate the pending action (principal, code/id, expiry, single use) -> gate -> run
 Every decision is written to the ``ultron.audit`` logger (no argument values).
+
+Every state-changing legacy action (voice, CLI, HUD, API and background services) is a
+registered tool and reaches its implementation only through ``request``/``confirm``;
+``tests/test_policy_boundary.py`` checks this statically and behaviourally.
 """
 
 from __future__ import annotations
@@ -79,7 +83,7 @@ class ToolRegistry:
             self._audit("request", name, ctx, "unavailable")
             return ToolOutcome("unavailable", "That action is only available on macOS.")
 
-        decision = evaluate(tool.spec.risk, ctx)
+        decision = evaluate(tool.spec.risk, ctx, internal_ok=tool.spec.internal_ok)
         if decision.decision is Decision.DENY:
             self._audit("request", name, ctx, "denied")
             return ToolOutcome("denied", f"I can't do that. {decision.reason}")
@@ -141,6 +145,18 @@ class ToolRegistry:
                 return ToolOutcome("denied", message or "The additional security check failed.")
         self._audit("confirm", pending.tool_name, ctx, "accepted")
         return self._execute(tool, pending.arguments, ctx)
+
+    def confirm_hint_map(self) -> tuple[tuple[str, str], ...]:
+        """(hint word, tool name) pairs, longest hint first, for spoken confirmations."""
+        pairs = [(hint, name) for name, tool in self._tools.items() for hint in tool.spec.confirm_hints]
+        return tuple(sorted(pairs, key=lambda pair: -len(pair[0])))
+
+    def invalidate_all(self, reason: str) -> int:
+        """Drop every pending action (e.g. the security posture changed). Returns how many."""
+        dropped = self.confirmations.clear()
+        if dropped:
+            audit_log.info("event=invalidate_all count=%d reason=%s", dropped, reason)
+        return dropped
 
     def cancel(self, ctx: CommandContext) -> ToolOutcome:
         pending = self.confirmations.cancel(ctx.principal)

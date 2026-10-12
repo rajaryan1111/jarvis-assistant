@@ -20,6 +20,8 @@ os.environ["ULTRON_DATA_DIR"] = str(_SANDBOX / "data")
 os.environ["ULTRON_MEMORY_FILE"] = str(_SANDBOX / "memory.json")
 os.environ["ULTRON_KNOWLEDGE_DIR"] = str(_SANDBOX / "knowledge_docs")
 os.environ["ULTRON_KNOWLEDGE_INDEX"] = str(_SANDBOX / "knowledge_index.json")
+os.environ["ULTRON_FACE_DIR"] = str(_SANDBOX / "faces")
+os.environ["ULTRON_SCREENSHOT_DIR"] = str(_SANDBOX / "screenshots")
 for _name in (
     "ULTRON_API_TOKEN", "ULTRON_API_TOKEN_FILE", "ULTRON_HOST", "ULTRON_PORT", "ULTRON_DEBUG",
     "ULTRON_ALLOW_NON_LOOPBACK", "ULTRON_ALLOWED_HOSTS", "ULTRON_ALLOWED_ORIGINS",
@@ -31,15 +33,29 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeRunner:
-    """Stands in for subprocess.run: records argv, never executes anything."""
+    """Stands in for subprocess.run: records argv (and kwargs), never executes anything."""
 
-    def __init__(self, returncode: int = 0) -> None:
+    def __init__(self, returncode: int = 0, stdout: bytes = b"") -> None:
         self.calls: list[list[str]] = []
+        self.kwargs: list[dict] = []
         self.returncode = returncode
+        self.stdout = stdout
 
     def __call__(self, argv, **kwargs):
         self.calls.append(list(argv))
-        return type("Completed", (), {"returncode": self.returncode})()
+        self.kwargs.append(kwargs)
+        return type("Completed", (), {"returncode": self.returncode, "stdout": self.stdout, "stderr": b""})()
+
+
+class FakeOpener:
+    """Stands in for webbrowser.open: records URLs, opens nothing."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    def __call__(self, url):
+        self.urls.append(url)
+        return True
 
 
 @pytest.fixture
@@ -48,23 +64,38 @@ def fake_runner() -> FakeRunner:
 
 
 @pytest.fixture
-def legacy(monkeypatch, tmp_path, fake_runner):
-    """``main`` with a darwin-flavoured tool registry backed by fakes, plus muted speech.
+def fake_opener() -> FakeOpener:
+    return FakeOpener()
 
-    Replacing ``main.TOOLS`` means shutdown/restart only reach ``fake_runner`` and the
-    cache tool only sees ``tmp_path / "Caches"``. ``main.subprocess.run`` is also
-    replaced so no legacy branch can launch a real process during a test.
+
+def fresh_memory() -> dict:
+    return {"notes": [], "profile": {}, "favorites": {}, "smarthome": {}, "reminders": [],
+            "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60}, "plans": []}
+
+
+@pytest.fixture
+def legacy(monkeypatch, tmp_path, fake_runner, fake_opener):
+    """``main`` with a darwin-flavoured tool registry backed by fakes.
+
+    Replacing ``main.TOOLS`` means every tool only reaches ``fake_runner`` (processes) or
+    ``fake_opener`` (browser); the cache tool only sees ``tmp_path / "Caches"`` and
+    screenshots go to ``tmp_path / "Shots"``. ``main.subprocess.run`` is also replaced so
+    no legacy branch can launch a real process during a test.
     """
     import main
 
     cache_dir = tmp_path / "Caches"
     cache_dir.mkdir()
-    monkeypatch.setattr(main, "TOOLS", main.build_tool_registry(platform="darwin", runner=fake_runner,
-                                                                cache_dir=cache_dir))
+    shots = tmp_path / "Shots"
+    shots.mkdir()
+    monkeypatch.setattr(main, "TOOLS", main.build_tool_registry(
+        platform="darwin", runner=fake_runner, cache_dir=cache_dir, opener=fake_opener,
+        screenshot_dir=shots, temperature_candidates=()))
     monkeypatch.setattr(main.subprocess, "run", fake_runner)
-    monkeypatch.setattr(main, "memory", {"reminders": []})
+    monkeypatch.setattr(main.webbrowser, "open", fake_opener)
+    monkeypatch.setattr(main, "jarvis_sleep", False)
+    monkeypatch.setattr(main, "memory", fresh_memory())
     monkeypatch.setattr(main, "save_memory", lambda mem: None)
-    monkeypatch.setattr(main, "is_security_enabled", lambda: False)
     monkeypatch.setattr(main, "cache_dir_for_tests", cache_dir, raising=False)
     return main
 

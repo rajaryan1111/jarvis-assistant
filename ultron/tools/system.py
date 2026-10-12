@@ -17,6 +17,7 @@ from typing import Any
 
 from ultron.security.policy import RiskTier
 from ultron.tools.base import ToolResult, ToolSpec
+from ultron.tools.process import run_command
 
 Runner = Callable[..., Any]
 MACOS = frozenset({"darwin"})
@@ -36,6 +37,7 @@ class PowerTool:
             risk=RiskTier.DESTRUCTIVE,
             side_effects=frozenset({"system"}),
             platforms=MACOS,
+            confirm_hints=("restart",) if action == "restart" else ("shut down", "shutdown"),
         )
 
     def preview(self, arguments: Mapping[str, Any]) -> str:
@@ -43,8 +45,8 @@ class PowerTool:
 
     def run(self, arguments: Mapping[str, Any]) -> ToolResult:
         script = f'tell application "System Events" to {self._action}'
-        completed = self._runner([OSASCRIPT, "-e", script], check=False, capture_output=True, timeout=30)
-        if getattr(completed, "returncode", 1) == 0:
+        completed = run_command([OSASCRIPT, "-e", script], runner=self._runner, timeout=30)
+        if completed.ok:
             verb = "Restarting" if self._action == "restart" else "Shutting down"
             return ToolResult(True, f"{verb} now, sir.")
         return ToolResult(False, f"macOS did not allow me to {self._action}. Check Automation permissions.")
@@ -57,6 +59,7 @@ class ClearUserCachesTool:
         risk=RiskTier.DESTRUCTIVE,
         side_effects=frozenset({"local_fs"}),
         platforms=MACOS,
+        confirm_hints=("cache", "clean"),
     )
 
     def __init__(self, cache_dir: Path | None = None, preview_limit: int = 100_000) -> None:

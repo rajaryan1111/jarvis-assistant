@@ -77,6 +77,8 @@ def create_app(
     signer = SessionSigner(api_token, settings.session_ttl_seconds) if api_token else None
     throttle = LoginThrottle()
     used_tickets = UsedNonces()
+    # Logged-out sessions stay rejected until their cookie would have expired anyway.
+    revoked_sessions = UsedNonces(retention_seconds=settings.session_ttl_seconds + 60)
     setup_message = token_result.problem or "Authentication is not configured."
 
     allowed_hosts = settings.allowed_hosts
@@ -121,7 +123,10 @@ def create_app(
     def _session_id() -> str | None:
         if signer is None:
             return None
-        return signer.verify(request.cookies.get(SessionSigner.COOKIE_NAME))
+        session_id = signer.verify(request.cookies.get(SessionSigner.COOKIE_NAME))
+        if session_id is not None and revoked_sessions.seen(session_id):
+            return None
+        return session_id
 
     def protected(state_changing: bool) -> Callable:
         def decorator(view: Callable) -> Callable:
@@ -221,6 +226,10 @@ def create_app(
     @app.post("/logout")
     @protected(state_changing=True)
     def logout():
+        ctx: CommandContext = g.ctx
+        backend.registry.cancel(ctx)  # a pending action never outlives the session that asked for it
+        if ctx.channel is Channel.HUD:
+            revoked_sessions.consume(ctx.principal.removeprefix("session:"))
         resp = make_response(jsonify({"ok": True}))
         resp.delete_cookie(SessionSigner.COOKIE_NAME, path="/", samesite="Strict", httponly=True)
         return resp
@@ -255,9 +264,10 @@ def create_app(
             return _error(400, "invalid_request", "Field 'text' must be a string.")
         if len(text) > MAX_SPEAK_CHARS:
             return _error(413, "too_long", f"Speech is limited to {MAX_SPEAK_CHARS} characters.")
-        if text.strip():
-            backend.speak(text)
-        return jsonify({"ok": True})
+        status = backend.speak(text, g.ctx) if text.strip() else "completed"
+        if status == "denied":
+            return _error(403, "forbidden", "This client is not allowed to use speech output.")
+        return jsonify({"ok": True, "status": status})
 
     @app.post("/confirm")
     @protected(state_changing=True)

@@ -10,6 +10,9 @@ Commands
   open-hud         open the HUD with a one-time, short-lived login link
   doctor           report configuration and optional-feature status (no secret values)
   check-secrets    scan files that could be committed for hardcoded credentials
+  security status  show whether face-check security mode is on
+  security disable owner recovery: turn security mode off from this Mac's shell
+                   (asks you to type DISABLE unless --yes is given)
 """
 
 from __future__ import annotations
@@ -18,7 +21,6 @@ import argparse
 import importlib.util
 import os
 import platform
-import subprocess
 import sys
 import webbrowser
 from pathlib import Path
@@ -34,6 +36,7 @@ from ultron.config import (
 from ultron.security.secret_scan import scan_repository
 from ultron.security.sessions import SessionSigner
 from ultron.security.tokens import load_api_token, write_token_file
+from ultron.tools.process import run_command
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -78,7 +81,10 @@ def _cmd_token(args: argparse.Namespace) -> int:
         if sys.platform != "darwin":
             print("`token copy` uses pbcopy and is only available on macOS.", file=sys.stderr)
             return 1
-        subprocess.run(["/usr/bin/pbcopy"], input=result.token.encode(), check=True)  # noqa: S603
+        copied = run_command(["/usr/bin/pbcopy"], input_text=result.token, timeout=10, max_output=256)
+        if not copied.ok:
+            print("Could not copy to the clipboard.", file=sys.stderr)
+            return 1
         print("API token copied to the clipboard.")
         return 0
     return 2
@@ -94,7 +100,7 @@ def _cmd_open_hud(_args: argparse.Namespace) -> int:
     url = f"{settings.local_base_url}/login#ticket={ticket}"  # fragment: never sent to the server or its logs
     browser_app = os.environ.get("ULTRON_BROWSER_APP")
     if sys.platform == "darwin" and browser_app:
-        subprocess.run(["/usr/bin/open", "-a", browser_app, url], check=False)  # noqa: S603
+        run_command(["/usr/bin/open", "-a", browser_app, url], timeout=15, max_output=256)
     elif not webbrowser.open(url):
         print("Could not open a browser. Open /login and paste your token instead.", file=sys.stderr)
         return 1
@@ -167,6 +173,33 @@ def _cmd_check_secrets(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_security(args: argparse.Namespace) -> int:
+    """Local-shell security-mode controls.
+
+    Voice, HUD and API can only turn security mode *off* through a confirmed action that
+    first passes the face check. If the camera or the vision extra is unavailable that check
+    can never pass, so the owner needs a way back in: this command, which requires a shell
+    on this Mac as the same OS user (the trust level needed to read the API token anyway).
+    """
+    import importlib
+
+    legacy = importlib.import_module("main")
+    if args.action == "status":
+        print(legacy.security_status())
+        return 0
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("Refusing to disable security mode without confirmation; re-run with --yes.", file=sys.stderr)
+            return 1
+        if input("Type DISABLE to turn off security mode: ").strip() != "DISABLE":
+            print("Not changed.")
+            return 1
+    print(legacy.disable_security_mode_offline())
+    print("If JARVIS is running, restart it now: a running instance keeps its old setting in memory "
+          "and could write it back.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ultron", description="ULTRON/JARVIS local assistant utilities")
     parser.add_argument("--version", action="version", version=__version__)
@@ -180,6 +213,10 @@ def build_parser() -> argparse.ArgumentParser:
     cs = sub.add_parser("check-secrets", help="scan for hardcoded credentials")
     cs.add_argument("--root", help="repository root (default: this checkout)")
     cs.set_defaults(func=_cmd_check_secrets)
+    sec = sub.add_parser("security", help="show or (owner recovery) disable face-check security mode")
+    sec.add_argument("action", choices=["status", "disable"])
+    sec.add_argument("--yes", action="store_true", help="do not ask for typed confirmation")
+    sec.set_defaults(func=_cmd_security)
     return parser
 
 

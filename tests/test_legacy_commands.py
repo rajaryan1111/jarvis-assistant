@@ -139,7 +139,7 @@ def test_security_mode_fails_closed_without_vision(legacy, monkeypatch):
     ("remind me tomorrow at 9 am to go college", "remind you to go college"),
 ])
 def test_reminder_descriptions_are_clean(legacy, cmd, fragment):
-    reply = legacy.set_reminder(cmd)
+    reply = legacy.set_reminder(cmd, CommandContext.local_voice())
     assert fragment in reply
     text = legacy.memory["reminders"][-1]["text"]
     assert not text.startswith(("s ", "9 am", "at "))

@@ -10,6 +10,9 @@
 import os
 import json
 import math
+from pathlib import Path
+
+from ultron.security.paths import atomic_write_text
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -194,10 +197,10 @@ def rebuild_knowledge_base(openai_client=None):
 
     data = {"entries": all_entries}
     try:
-        with open(INDEX_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f)
+        # Atomic replace: a failed or interrupted rebuild keeps the previous index usable.
+        atomic_write_text(Path(INDEX_FILE), json.dumps(data))
     except Exception as e:
-        print("[KB] Failed to save index:", e)
+        print("[KB] Failed to save index:", type(e).__name__)
         return "I tried to save the knowledge index, but something went wrong, sir."
 
     return f"I have indexed {len(all_entries)} chunks from {len(files)} files in your knowledge base, sir."

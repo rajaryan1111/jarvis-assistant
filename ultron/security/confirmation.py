@@ -135,6 +135,13 @@ class ConfirmationStore:
             del self._pending[principal]
             return action
 
+    def clear(self) -> int:
+        """Invalidate every pending action for every principal. Returns how many were dropped."""
+        with self._lock:
+            count = len(self._pending)
+            self._pending.clear()
+            return count
+
     def cancel(self, principal: str) -> PendingAction | None:
         with self._lock:
             self._purge(self._clock())

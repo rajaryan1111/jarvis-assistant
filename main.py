@@ -7,6 +7,7 @@ import re
 import webbrowser
 import time
 import threading
+from pathlib import Path
 from threading import Thread
 from typing import Tuple
 
@@ -19,10 +20,20 @@ import vision  # optional vision utilities; degrade gracefully when OpenCV/Media
 import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
 import news
 from ultron.config import get_credential, load_dotenv_if_enabled
+from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier
 from ultron.security.redact import redact
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
-from ultron.tools.registry import ToolRegistry
+from ultron.tools.macos import (
+    BrightnessTool,
+    CpuTemperatureTool,
+    OpenAppTool,
+    OpenUrlTool,
+    ScreenshotTool,
+    SpeakTool,
+    VolumeTool,
+)
+from ultron.tools.registry import ToolOutcome, ToolRegistry
 from ultron.tools.system import ClearUserCachesTool, PowerTool
 
 # ================== SETUP ==================
@@ -43,33 +54,42 @@ WAKE_WORD = "jarvis"
 jarvis_sleep = False
 
 VOICE = "Daniel"  # macOS voice name
+OWNER_FACE = "raj"  # name of the stored reference face used by "security mode"
+
+# Background services act with their own internal identity. They can run only the ROUTINE
+# tools that opt in (speak, camera presence checks) and can never confirm anything.
+_REMINDER_CTX = CommandContext.internal("reminder-watcher")
+_INTRUDER_CTX = CommandContext.internal("intruder-watcher")
+
+
+# ================== POLICY BOUNDARY HELPERS ==================
+# Every state-changing helper below is a thin wrapper: it builds explicit arguments and asks
+# the tool registry (TOOLS, defined further down), which applies the risk policy for the
+# caller's CommandContext. The implementations are the ``_tool_*`` functions, which are only
+# referenced from build_tool_registry(). Calling a helper without a context counts as
+# untrusted, so importing main and calling e.g. set_volume(50) directly does nothing.
+def _outcome(tool_name: str, arguments: dict, ctx: CommandContext = None) -> ToolOutcome:
+    return TOOLS.request(tool_name, arguments, ctx or CommandContext.untrusted("direct-call"))
+
+
+def _act(tool_name: str, arguments: dict, ctx: CommandContext = None) -> str:
+    return _outcome(tool_name, arguments, ctx).message
 
 
 # ================== BASIC UTILITIES ==================
-def speak(text: str):
+def speak(text: str, ctx: CommandContext = None) -> str:
     """
-    Mac voice mode:
-    - All Jarvis speech comes from your Mac using macOS 'say'
-    - Called from CLI, Flask /ask, Flask /speak
+    Mac voice mode: speech comes from macOS 'say' through the ``audio.speak`` tool
+    (absolute path, timeout, option-injection guard). Used by the CLI loop, /speak and
+    the background watchers, each with its own context. Returns the tool outcome status.
     """
     if not text:
-        return
-
+        return "completed"
     print(f"[JARVIS SPEAK] {text}")  # debug
-
-    # A message starting with "-" would be parsed by `say` as an option (e.g. "-o file").
-    if text.startswith("-"):
-        text = " " + text
-
-    try:
-        # Use absolute path to 'say' to avoid PATH issues
-        subprocess.run(
-            ["/usr/bin/say", "-v", VOICE, text],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception as e:
-        print("[JARVIS SPEAK ERROR]", e)
+    outcome = _outcome("audio.speak", {"text": text}, ctx)
+    if outcome.status not in ("completed", "unavailable"):
+        print("[JARVIS SPEAK]", outcome.message)
+    return outcome.status
 
 
 def listen(timeout=6, phrase_time_limit=8) -> str:
@@ -137,26 +157,27 @@ _memory_lock = threading.RLock()
 
 
 def save_memory(mem):
-    """Atomic write (temp file + rename) so a crash or concurrent save cannot corrupt the file."""
-    tmp_path = f"{MEMORY_FILE}.tmp"
+    """Atomic write so a crash or concurrent save cannot corrupt the file.
+
+    The temp file gets a random name created with O_EXCL (never follows a planted
+    symlink) and is renamed over memory.json; on failure the old file is untouched.
+    """
     try:
         with _memory_lock:
-            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w") as f:
-                json.dump(mem, f, indent=2)
-            os.replace(tmp_path, MEMORY_FILE)
+            atomic_write_text(Path(MEMORY_FILE), json.dumps(mem, indent=2))
     except Exception as e:
-        print("Memory save error:", e)
+        print("Memory save error:", type(e).__name__)
 
 
 memory = load_memory()
 
 
-def update_profile_from_sentence(cmd: str):
+def _parse_profile_update(cmd: str):
     """
     Learn from sentences like:
     - my name is raj
     - my favourite game is gta 5
+    Returns explicit tool arguments, or None if the sentence teaches nothing.
     """
     text = cmd.lower()
 
@@ -164,9 +185,7 @@ def update_profile_from_sentence(cmd: str):
     if "my name is" in text:
         name = text.split("my name is", 1)[1].strip()
         if name:
-            memory["profile"]["name"] = name
-            save_memory(memory)
-            return f"Nice to meet you, {name}."
+            return {"field": "name", "value": name}
 
     # Favourites
     if "my favourite" in text or "my favorite" in text:
@@ -177,11 +196,43 @@ def update_profile_from_sentence(cmd: str):
             attr = attr.strip()
             value = value.strip()
             if attr and value:
-                memory["favorites"][attr] = value
-                save_memory(memory)
-                return f"I will remember your favourite {attr} is {value}."
+                return {"field": "favorite", "key": attr, "value": value}
 
     return None
+
+
+def update_profile_from_sentence(cmd: str, ctx: CommandContext = None):
+    update = _parse_profile_update(cmd)
+    if update is None:
+        return None
+    return _act("profile.update", update, ctx)
+
+
+def _tool_update_profile(args) -> ToolResult:
+    value = str(args.get("value", "")).strip()
+    if args.get("field") == "name" and value:
+        memory.setdefault("profile", {})["name"] = value
+        save_memory(memory)
+        return ToolResult(True, f"Nice to meet you, {value}.")
+    key = str(args.get("key", "")).strip()
+    if args.get("field") == "favorite" and key and value:
+        memory.setdefault("favorites", {})[key] = value
+        save_memory(memory)
+        return ToolResult(True, f"I will remember your favourite {key} is {value}.")
+    return ToolResult(False, "I did not understand what to remember.")
+
+
+def remember_note(fact: str, ctx: CommandContext = None) -> str:
+    return _act("memory.add_note", {"fact": fact}, ctx)
+
+
+def _tool_add_note(args) -> ToolResult:
+    fact = str(args.get("fact", "")).strip()
+    if not fact:
+        return ToolResult(False, "What should I remember, sir?")
+    memory.setdefault("notes", []).append(fact)
+    save_memory(memory)
+    return ToolResult(True, "Stored in my memory.")
 
 
 def answer_profile_query(cmd: str):
@@ -236,21 +287,19 @@ def ask_gpt(prompt: str, history):
 
 
 # ================== INTERNET SKILLS ==================
-def play_youtube(query: str) -> str:
+def play_youtube(query: str, ctx: CommandContext = None) -> str:
     search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
     try:
         res = requests.get(search_url, timeout=5)
         video_ids = re.findall(r"watch\?v=([\w-]{11})", res.text)
-        if video_ids:
-            url = "https://www.youtube.com/watch?v=" + video_ids[0]
-        else:
-            url = search_url
-        webbrowser.open(url)
-        return f"Playing {query} on YouTube."
+        url = "https://www.youtube.com/watch?v=" + video_ids[0] if video_ids else search_url
+        reply = f"Playing {query} on YouTube."
     except Exception as e:
-        print("YouTube error:", e)
-        webbrowser.open(search_url)
-        return f"There was an issue, but I opened YouTube search for {query}."
+        print("YouTube error:", type(e).__name__)
+        url = search_url
+        reply = f"There was an issue, but I opened YouTube search for {query}."
+    outcome = _outcome("web.open_url", {"url": url}, ctx)
+    return reply if outcome.status == "completed" else outcome.message
 
 
 def get_weather(cmd: str) -> str:
@@ -304,7 +353,7 @@ def wiki(cmd: str) -> str:
 
 
 # ================== WEB SEARCH (DUCKDUCKGO) ==================
-def web_search_ddg(query: str) -> str:
+def web_search_ddg(query: str, ctx: CommandContext = None) -> str:
     """
     Simple real-time web search using DuckDuckGo.
     - Opens full results in browser
@@ -319,22 +368,20 @@ def web_search_ddg(query: str) -> str:
 
         # Grab top result titles from result__a anchors
         matches = re.findall(r'class="result__a".*?>(.*?)</a>', html)
-        if not matches:
-            webbrowser.open(url_main)
-            return f"I opened web results for {query} in your browser, sir."
-
-        # Strip HTML tags
-        def strip_tags(t):
-            return re.sub("<.*?>", "", t)
-
-        titles = [strip_tags(m) for m in matches[:3]]
-        summary = " ; ".join(titles)
-        webbrowser.open(url_main)
-        return f"Here is what I found about {query}: {summary}."
     except Exception as e:
-        print("Web search error:", e)
-        webbrowser.open(url_main)
+        print("Web search error:", type(e).__name__)
+        matches = []
+
+    # Opening the browser is a ROUTINE action; reading result titles is read-only, so an
+    # untrusted caller still gets the titles but never a browser window.
+    opened = _outcome("web.open_url", {"url": url_main}, ctx)
+    if matches:
+        # Strip HTML tags
+        titles = [re.sub("<.*?>", "", m) for m in matches[:3]]
+        return f"Here is what I found about {query}: {' ; '.join(titles)}."
+    if opened.status == "completed":
         return f"I opened web results for {query} in your browser, sir."
+    return opened.message
 
 
 # ================== LIVE CRICKET (CRICKETDATA) ==================
@@ -411,17 +458,16 @@ def get_live_cricket_score(cmd: str) -> str:
 
 
 # ================== SYSTEM INTELLIGENCE ==================
-def get_cpu_temperature():
+def get_cpu_temperature(ctx: CommandContext = None):
     """
-    Uses 'osx-cpu-temp' (installed via Homebrew) to read CPU temperature.
+    Uses 'osx-cpu-temp' (installed via Homebrew) through the read-only
+    ``system.cpu_temperature`` tool (fixed absolute path, 5 s timeout).
     Returns a string like '46.5°C' or None if it fails.
     """
-    try:
-        temp = subprocess.check_output(["osx-cpu-temp"]).decode().strip()
-        return temp
-    except Exception as e:
-        print("CPU temp error:", e)
-        return None
+    outcome = _outcome("system.cpu_temperature", {}, ctx)
+    if outcome.status == "completed" and outcome.result is not None:
+        return outcome.result.data.get("temperature")
+    return None
 
 
 def system_report() -> str:
@@ -471,13 +517,12 @@ def system_report() -> str:
 
 
 # ================== APP / SYSTEM CONTROL ==================
-def launch_any_app(app_name: str) -> str:
+def launch_any_app(app_name: str, ctx: CommandContext = None) -> str:
     """
     Launch macOS apps by voice.
-    - First tries to open a real .app
+    - First tries to open a real .app (``apps.open`` tool: validated name, no options)
     - If that fails, falls back to opening a website in the browser
-      (facebook, linkedin, youtube, etc.).
-    Special hard-coded case for Canva.
+      (facebook, linkedin, youtube, etc.) through the ``web.open_url`` tool.
     """
     raw = app_name.strip()
     if not raw:
@@ -485,17 +530,9 @@ def launch_any_app(app_name: str) -> str:
 
     lower = raw.lower()
 
-    # ===== Special case: Canva desktop app =====
-    if "canva" in lower:
-        try:
-            subprocess.run(["open", "/Applications/Canva.app"])
-            return "Launching Canva."
-        except Exception as e:
-            print("Canva open error:", e)
-            return "I tried, but could not open Canva."
-
     # ===== Spoken-name → real app mapping =====
     mapping = {
+        "canva": "Canva",
         "chrome": "Google Chrome",
         "google chrome": "Google Chrome",
         "vs code": "Visual Studio Code",
@@ -512,19 +549,12 @@ def launch_any_app(app_name: str) -> str:
         "safari": "Safari",
         "terminal": "Terminal",
     }
-    app_to_open = mapping.get(lower, raw)
+    app_to_open = "Canva" if "canva" in lower else mapping.get(lower, raw)
 
     # ===== 1) Try to open as a native macOS app =====
-    try:
-        result = subprocess.run(
-            ["open", "-a", app_to_open],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if result.returncode == 0:
-            return f"Launching {app_to_open}."
-    except Exception as e:
-        print("open -a error:", e)
+    outcome = _outcome("apps.open", {"app": app_to_open}, ctx)
+    if outcome.status in ("completed", "denied"):
+        return outcome.message
 
     # ===== 2) Fallback: treat as website and open in browser =====
 
@@ -550,53 +580,30 @@ def launch_any_app(app_name: str) -> str:
     if "." not in site_name:
         site_name += ".com"
 
-    url = "https://" + site_name
-
-    try:
-        webbrowser.open(url)
-        return f"Opening {site_name} in your browser, sir."
-    except Exception as e:
-        print("webbrowser open error:", e)
+    # Only plain host names (letters, digits, dots, dashes) become URLs.
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", site_name):
         return f"I could not open {app_name}, sir."
 
+    opened = _outcome("web.open_url", {"url": "https://" + site_name}, ctx)
+    if opened.status == "completed":
+        return f"Opening {site_name} in your browser, sir."
+    return opened.message
 
-def change_brightness_relative(direction: str, steps: int = 4) -> str:
+
+def change_brightness_relative(direction: str, steps: int = 4, ctx: CommandContext = None) -> str:
+    return _act("system.brightness", {"direction": direction, "steps": steps}, ctx)
+
+
+def set_volume(level: int, ctx: CommandContext = None) -> str:
     try:
-        key_code = 107 if direction == "up" else 113
-        script = f'''
-        tell application "System Events"
-            repeat {steps} times
-                key code {key_code}
-            end repeat
-        end tell
-        '''
-        subprocess.run(["osascript", "-e", script])
-        return "Brightness adjusted."
-    except Exception as e:
-        print("Brightness error:", e)
-        return "I tried, but could not change the brightness."
+        level = int(level)
+    except (TypeError, ValueError):
+        return "Tell me the volume level, like volume 50."
+    return _act("system.set_volume", {"level": level}, ctx)
 
 
-def set_volume(level: int) -> str:
-    try:
-        level = max(0, min(int(level), 100))
-        subprocess.run(["osascript", "-e", f"set volume output volume {level}"])
-        return f"Volume set to {level} percent."
-    except Exception as e:
-        print("Volume error:", e)
-        return "I could not change the volume."
-
-
-def take_screenshot() -> str:
-    try:
-        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"jarvis_screenshot_{ts}.png"
-        path = os.path.expanduser(f"~/Desktop/{filename}")
-        subprocess.run(["screencapture", "-x", path])
-        return f"Screenshot saved to Desktop as {filename}."
-    except Exception as e:
-        print("Screenshot error:", e)
-        return "I tried to take a screenshot but something went wrong."
+def take_screenshot(ctx: CommandContext = None) -> str:
+    return _act("system.screenshot", {}, ctx)
 
 
 def tell_time() -> str:
@@ -617,7 +624,11 @@ def get_status():
 
 
 # ================== SMART HOME (VIRTUAL) ==================
-def control_smart_home(cmd: str) -> str:
+def control_smart_home(cmd: str, ctx: CommandContext = None) -> str:
+    return _act("smarthome.control", {"command": cmd}, ctx)
+
+
+def _tool_control_smart_home(cmd: str) -> str:
     """
     Virtual smart home controller.
     You don't have physical devices yet, so:
@@ -669,7 +680,11 @@ def control_smart_home(cmd: str) -> str:
 
 
 # ================== REMINDERS ==================
-def set_reminder(cmd: str) -> str:
+def set_reminder(cmd: str, ctx: CommandContext = None) -> str:
+    return _act("reminders.add", {"command": cmd}, ctx)
+
+
+def _tool_set_reminder(cmd: str) -> str:
     """
     Advanced reminder parser.
     Supports:
@@ -839,7 +854,12 @@ def list_reminders() -> str:
     return "Here are your reminders: " + " ; ".join(lines)
 
 
-def clear_reminders() -> str:
+def clear_reminders(ctx: CommandContext = None) -> str:
+    """Asks for confirmation first (DESTRUCTIVE); nothing is deleted by this call itself."""
+    return _act("reminders.clear_all", {}, ctx)
+
+
+def _tool_clear_reminders() -> str:
     memory["reminders"] = []
     save_memory(memory)
     return "I have cleared all reminders, sir."
@@ -866,7 +886,7 @@ def reminder_watcher():
                     t = float(r.get("time", 0))
                     repeat = r.get("repeat")
                     if now_ts >= t:
-                        speak(f"Reminder, sir: {r.get('text', 'something you asked me to remember.')}")
+                        speak(f"Reminder, sir: {r.get('text', 'something you asked me to remember.')}", _REMINDER_CTX)
                         if repeat == "daily":
                             # Shift forward 1 day (or more if we are very late)
                             next_t = t
@@ -901,22 +921,68 @@ def is_security_enabled() -> bool:
     return bool(sec.get("enabled", False))
 
 
-def enable_security_mode() -> str:
+def enable_security_mode(ctx: CommandContext = None) -> str:
+    """Turning protection ON is ROUTINE: it only makes later actions stricter."""
+    return _act("security.enable", {}, ctx)
+
+
+def disable_security_mode(ctx: CommandContext = None) -> str:
+    """Turning protection OFF needs confirmation, and the confirmation itself passes the
+    security-mode gate (face check) while the mode is still on, so disabling the feature
+    can never be used to skip the check it provides."""
+    if not is_security_enabled():
+        return "Security mode is already disabled, sir."
+    return _act("security.disable", {}, ctx)
+
+
+def _tool_enable_security() -> str:
     sec = _get_security_state()
     sec["enabled"] = True
     sec.setdefault("last_auth_time", 0)
     sec.setdefault("auth_timeout_sec", 60)
     memory["security"] = sec
     save_memory(memory)
+    # Requests made under the old posture must be asked for again.
+    TOOLS.invalidate_all("security mode enabled")
     return "Security mode enabled, sir. Sensitive commands will now require your face."
 
 
-def disable_security_mode() -> str:
+def _tool_disable_security() -> str:
     sec = _get_security_state()
     sec["enabled"] = False
+    sec["last_auth_time"] = 0
     memory["security"] = sec
     save_memory(memory)
+    TOOLS.invalidate_all("security mode disabled")
     return "Security mode disabled, sir. I will execute commands normally."
+
+
+def disable_security_mode_offline() -> str:
+    """Owner recovery path, used only by `python -m ultron security disable` on this Mac.
+
+    It edits the local memory file directly, so it requires the same OS-account access as
+    reading the API token or editing memory.json by hand; it is not reachable from voice,
+    the HUD or the API. Exists so a missing camera/vision extra cannot lock the owner out.
+    """
+    global memory
+    memory = load_memory()
+    sec = _get_security_state()
+    was_enabled = bool(sec.get("enabled"))
+    sec["enabled"] = False
+    sec["last_auth_time"] = 0
+    save_memory(memory)
+    return "Security mode disabled." if was_enabled else "Security mode was already disabled."
+
+
+def verify_identity(ctx: CommandContext = None) -> str:
+    return _act("security.verify_identity", {}, ctx)
+
+
+def _tool_verify_identity() -> ToolResult:
+    ok, msg = security_check()
+    if ok and not msg:
+        return ToolResult(True, "Identity already verified recently, sir.")
+    return ToolResult(ok, msg)
 
 
 def security_status() -> str:
@@ -956,18 +1022,34 @@ def security_check() -> Tuple[bool, str]:
     if not vision.face_available():
         # Fail closed: security mode is on but the camera check cannot run.
         return False, ("Security mode is enabled, but vision support is not installed, so I cannot verify you. "
-                       "Install the 'vision' extra or say 'disable security mode'.")
+                       "Install the 'vision' extra, or on this Mac run `python -m ultron security disable`.")
 
     # Need fresh face verification (prototype only; not real authentication)
-    same, score = vision.recognize_face("raj")
+    same, score = vision.recognize_face(OWNER_FACE)
     if score is None:
-        return False, "Security check failed, sir. I do not have your face stored. Say 'register my face' first."
+        return False, ("Security check failed, sir. I do not have your face stored. Register it while security "
+                       "mode is off, or run `python -m ultron security disable` on this Mac.")
 
     if same:
         _mark_authenticated()
         return True, "Identity verified, sir."
     else:
         return False, "Security check failed, sir. The person in front of the camera does not match your stored face."
+
+
+def intruder_check_once() -> bool:
+    """One intruder check through the policy boundary (internal context). True if alerted."""
+    # Quick cheap check first
+    seen = _outcome("vision.detect_person", {}, _INTRUDER_CTX)
+    if seen.status != "completed" or not seen.result.data.get("seen"):
+        return False
+    owner = _outcome("vision.recognize_owner", {}, _INTRUDER_CTX)
+    if owner.status != "completed" or owner.result.data.get("score") is None:
+        return False  # no reference face (or camera failure): skip
+    if owner.result.data.get("same"):
+        return False
+    speak("Intruder detected, sir. Triggering red alert protocol.", _INTRUDER_CTX)
+    return True
 
 
 def intruder_watcher():
@@ -981,19 +1063,7 @@ def intruder_watcher():
             time.sleep(10)
             if not is_security_enabled() or not vision.face_available():
                 continue
-
-            # Quick cheap check first
-            if not vision.see_any_person():
-                continue
-
-            same, score = vision.recognize_face("raj")
-            if score is None:
-                # No reference face, skip
-                continue
-
-            if not same:
-                speak("Intruder detected, sir. Triggering red alert protocol.")
-                # Optional: could log timestamp here
+            intruder_check_once()
         except Exception as e:
             print("Intruder watcher error:", e)
 
@@ -1003,7 +1073,11 @@ def _normalize_topic(text: str) -> str:
     return (text or "").strip().lower()
 
 
-def create_study_plan(topic: str) -> str:
+def create_study_plan(topic: str, ctx: CommandContext = None) -> str:
+    return _act("study.create_plan", {"topic": topic}, ctx)
+
+
+def _tool_create_study_plan(topic: str) -> str:
     """
     Uses GPT to generate a study plan for given topic.
     Stores in memory['plans'].
@@ -1082,7 +1156,7 @@ def create_study_plan(topic: str) -> str:
 
     # Also set a daily reminder at 8 PM to study this topic
     reminder_cmd = f"remind me every day at 8 pm to study {topic_norm}"
-    reminder_reply = set_reminder(reminder_cmd)
+    reminder_reply = _tool_set_reminder(reminder_cmd)  # already inside the authorised action
 
     return (
         f"I have created a study plan for {topic_norm}, sir. "
@@ -1117,7 +1191,11 @@ def show_study_plan_for(topic: str) -> str:
     return f"I did not find any study plan for {topic_norm}, sir."
 
 
-def update_study_progress(cmd: str) -> str:
+def update_study_progress(cmd: str, ctx: CommandContext = None) -> str:
+    return _act("study.update_progress", {"command": cmd}, ctx)
+
+
+def _tool_update_study_progress(cmd: str) -> str:
     """
     Example phrases:
     - update my progress for data structures to 40 percent
@@ -1186,30 +1264,161 @@ def confirmation_gate(pending) -> Tuple[bool, str]:
     return ok, msg
 
 
-def _clear_reminders_tool() -> FunctionTool:
-    def preview(_args) -> str:
-        count = len(memory.get("reminders", []))
-        return f"This will permanently delete all {count} reminder{'s' if count != 1 else ''}."
+def set_sleep(asleep: bool, ctx: CommandContext = None) -> str:
+    return _act("assistant.set_sleep", {"asleep": bool(asleep)}, ctx)
 
-    def run(_args) -> ToolResult:
-        return ToolResult(True, clear_reminders())
 
-    spec = ToolSpec(
-        name="reminders.clear_all",
-        description="Delete all stored reminders.",
-        risk=RiskTier.DESTRUCTIVE,
-        side_effects=frozenset({"deletes_local_data"}),
-    )
+def _tool_set_sleep(args) -> ToolResult:
+    global jarvis_sleep
+    jarvis_sleep = bool(args.get("asleep"))
+    return ToolResult(True, "Entering sleep mode. Say Jarvis wake up." if jarvis_sleep else "I am awake sir.")
+
+
+def reload_knowledge(ctx: CommandContext = None) -> str:
+    return _act("knowledge.reload", {}, ctx)
+
+
+def register_face(ctx: CommandContext = None) -> str:
+    """Replaces the reference face that security mode compares against: needs confirmation."""
+    return _act("vision.register_face", {}, ctx)
+
+
+def recognize_owner(ctx: CommandContext = None) -> str:
+    return _act("vision.recognize_owner", {}, ctx)
+
+
+def detect_hand(ctx: CommandContext = None) -> str:
+    return _act("vision.hand_gesture", {}, ctx)
+
+
+def detect_person(ctx: CommandContext = None) -> str:
+    return _act("vision.detect_person", {}, ctx)
+
+
+def _tool_register_face(_args) -> ToolResult:
+    if not vision.face_available():
+        return ToolResult(False, vision.unavailable_message())
+    ok = vision.register_face(OWNER_FACE)
+    return ToolResult(ok, "I have registered your face, sir." if ok else "I could not capture your face.")
+
+
+def _tool_recognize_owner(_args) -> ToolResult:
+    if not vision.face_available():
+        return ToolResult(False, vision.unavailable_message())
+    same, score = vision.recognize_face(OWNER_FACE)
+    data = {"same": bool(same), "score": score}
+    if score is None:
+        return ToolResult(True, "I have no stored face. Say register my face first.", data)
+    return ToolResult(True, "Yes sir, I see you." if same else "I see someone, but I'm not sure it's you.", data)
+
+
+def _tool_detect_person(_args) -> ToolResult:
+    if not vision.face_available():
+        return ToolResult(False, vision.unavailable_message())
+    seen = bool(vision.see_any_person())
+    message = "I can see at least one person." if seen else "I do not clearly see anyone right now."
+    return ToolResult(True, message, {"seen": seen})
+
+
+def _tool_hand_gesture(_args) -> ToolResult:
+    if vision.hands_backend() is None:
+        return ToolResult(False, vision.unavailable_message(hands=True))
+    gesture = vision.detect_hand_gesture()
+    if gesture == "open_palm":
+        message = "I see an open palm."
+    elif gesture == "no_hand":
+        message = "I do not see any hand."
+    else:
+        message = "I see a hand, but I cannot classify the gesture."
+    return ToolResult(True, message, {"gesture": gesture})
+
+
+def _fn_tool(name, description, risk, run, *, side_effects=(), preview=None, internal_ok=False,
+             confirm_hints=()) -> FunctionTool:
+    spec = ToolSpec(name=name, description=description, risk=risk, side_effects=frozenset(side_effects),
+                    internal_ok=internal_ok, confirm_hints=tuple(confirm_hints))
     return FunctionTool(spec, run, preview)
 
 
-def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None) -> ToolRegistry:
-    """Every destructive or high-impact legacy operation is registered here with its risk tier."""
+def _text_tool(fn):
+    """Adapt a legacy ``fn(command_text) -> reply`` implementation to the tool interface."""
+    return lambda args: ToolResult(True, fn(str(args.get("command", ""))))
+
+
+def _reminder_count_preview(_args) -> str:
+    count = len(memory.get("reminders", []))
+    return f"This will permanently delete all {count} reminder{'s' if count != 1 else ''}."
+
+
+def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, opener=None,
+                        screenshot_dir=None, temperature_candidates=None) -> ToolRegistry:
+    """Every state-changing legacy operation is registered here with its risk tier.
+
+    This is the complete list; docs/M1_1_TOOL_SECURITY_BOUNDARY.md mirrors it as the action/risk
+    matrix and tests/test_policy_boundary.py fails if the two drift apart.
+    """
     registry = ToolRegistry(platform=platform) if platform else ToolRegistry()
+    R = RiskTier
+    # --- macOS / system (subprocess, browser) --------------------------------------------
+    registry.register(SpeakTool(runner=runner, voice=VOICE))
+    registry.register(OpenAppTool(runner=runner))
+    # Look the opener up at call time so tests (and the stdlib) can swap webbrowser.open.
+    registry.register(OpenUrlTool(opener=opener or (lambda url: webbrowser.open(url))))
+    registry.register(VolumeTool(runner=runner))
+    registry.register(BrightnessTool(runner=runner))
+    registry.register(ScreenshotTool(runner=runner, directory=screenshot_dir))
+    temp_kwargs = {"candidates": temperature_candidates} if temperature_candidates is not None else {}
+    registry.register(CpuTemperatureTool(runner=runner, **temp_kwargs))
     registry.register(PowerTool("restart", runner=runner))
     registry.register(PowerTool("shut down", runner=runner))
     registry.register(ClearUserCachesTool(cache_dir=cache_dir))
-    registry.register(_clear_reminders_tool())
+    # --- local assistant data (memory.json, knowledge index) -----------------------------
+    registry.register(_fn_tool("memory.add_note", "Store a note in memory.", R.ROUTINE, _tool_add_note,
+                               side_effects={"local_data"}))
+    registry.register(_fn_tool("profile.update", "Remember your name or a favourite.", R.ROUTINE,
+                               _tool_update_profile, side_effects={"local_data"}))
+    registry.register(_fn_tool("reminders.add", "Add a reminder.", R.ROUTINE, _text_tool(_tool_set_reminder),
+                               side_effects={"local_data"}))
+    registry.register(_fn_tool("reminders.clear_all", "Delete all stored reminders.", R.DESTRUCTIVE,
+                               lambda _args: ToolResult(True, _tool_clear_reminders()),
+                               side_effects={"deletes_local_data"}, preview=_reminder_count_preview,
+                               confirm_hints=("reminder",)))
+    registry.register(_fn_tool("study.create_plan", "Create a study plan and a daily reminder.", R.ROUTINE,
+                               lambda args: ToolResult(True, _tool_create_study_plan(str(args.get("topic", "")))),
+                               side_effects={"local_data", "network"}))
+    registry.register(_fn_tool("study.update_progress", "Update study-plan progress.", R.ROUTINE,
+                               _text_tool(_tool_update_study_progress), side_effects={"local_data"}))
+    registry.register(_fn_tool("smarthome.control", "Change virtual smart-home state.", R.ROUTINE,
+                               _text_tool(_tool_control_smart_home), side_effects={"local_data"}))
+    registry.register(_fn_tool("assistant.set_sleep", "Put the assistant to sleep or wake it.", R.ROUTINE,
+                               _tool_set_sleep, side_effects={"assistant_state"}))
+    registry.register(_fn_tool("knowledge.reload", "Rebuild the knowledge index from your documents.", R.ROUTINE,
+                               lambda _args: ToolResult(True, knowledge.rebuild_knowledge_base(client)),
+                               side_effects={"local_data"}))
+    # --- security mode and camera --------------------------------------------------------
+    registry.register(_fn_tool("security.enable", "Turn on face-check security mode.", R.ROUTINE,
+                               lambda _args: ToolResult(True, _tool_enable_security()),
+                               side_effects={"security_setting", "camera"}))
+    registry.register(_fn_tool(
+        "security.disable", "Turn off face-check security mode.", R.CONSEQUENTIAL,
+        lambda _args: ToolResult(True, _tool_disable_security()), side_effects={"security_setting"},
+        preview=lambda _args: ("This will turn off security mode, so sensitive actions will no longer need a "
+                               "face check, and the intruder watcher will stop."),
+        confirm_hints=("security", "disarm")))
+    registry.register(_fn_tool("security.verify_identity", "Check your face against the stored one.", R.ROUTINE,
+                               lambda _args: _tool_verify_identity(), side_effects={"camera"}))
+    registry.register(_fn_tool(
+        "vision.register_face", "Capture and store your reference face.", R.CONSEQUENTIAL, _tool_register_face,
+        side_effects={"camera", "security_setting", "local_fs_replace"},
+        preview=lambda _args: ("This will capture a photo with the camera and replace the stored face that "
+                               "security mode uses to recognise you."),
+        confirm_hints=("face",)))
+    registry.register(_fn_tool("vision.recognize_owner", "Compare the camera image with your stored face.",
+                               R.ROUTINE, _tool_recognize_owner, side_effects={"camera"}, internal_ok=True))
+    registry.register(_fn_tool("vision.detect_person", "Check whether anyone is in front of the camera.",
+                               R.ROUTINE, _tool_detect_person, side_effects={"camera"}, internal_ok=True))
+    registry.register(_fn_tool("vision.hand_gesture", "Look for a hand gesture with the camera.", R.ROUTINE,
+                               _tool_hand_gesture, side_effects={"camera"}))
     return registry
 
 
@@ -1219,14 +1428,6 @@ _CONFIRM_RE = re.compile(r"^(?:yes[, ]+)?(?:i\s+)?confirm\b(?P<rest>.*)$")
 _CANCEL_RE = re.compile(r"^(?:cancel|abort|never ?mind|don't do it|do not do it)\b")
 _DIGIT_WORDS = {"zero": "0", "oh": "0", "one": "1", "two": "2", "to": "2", "too": "2", "three": "3",
                 "four": "4", "for": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"}
-_CONFIRM_TOOL_HINTS = (
-    ("restart", "system.restart"),
-    ("shut down", "system.shutdown"),
-    ("shutdown", "system.shutdown"),
-    ("cache", "system.clear_user_caches"),
-    ("clean", "system.clear_user_caches"),
-    ("reminder", "reminders.clear_all"),
-)
 
 
 def _extract_code(text: str):
@@ -1243,7 +1444,7 @@ def handle_confirmation_intents(cmd: str, ctx: CommandContext):
     m = _CONFIRM_RE.match(cmd)
     if m:
         rest = m.group("rest")
-        expected = next((tool for hint, tool in _CONFIRM_TOOL_HINTS if hint in rest), None)
+        expected = next((tool for hint, tool in TOOLS.confirm_hint_map() if hint in rest), None)
         outcome = TOOLS.confirm(ctx, code=_extract_code(rest), expected_tool=expected, gate=confirmation_gate)
         return outcome.message
     if _CANCEL_RE.match(cmd) and TOOLS.has_pending(ctx):
@@ -1256,12 +1457,13 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     """
     Main brain used by Flask (/ask) and also CLI mode.
 
-    ``ctx`` says who is asking. Without one, the request is treated as untrusted: routine
-    legacy commands still work, but risk-checked actions (shutdown, restart, cache cleanup,
-    clearing reminders) are refused. Only text typed or spoken by an authenticated user
-    reaches this function; LLM replies and knowledge-base content are never routed here.
+    ``ctx`` says who is asking. Every branch that changes anything (apps, browser, volume,
+    camera, memory, reminders, security mode, power ...) goes through the tool registry with
+    this context, so the same policy applies to voice, CLI, HUD and API. Without a context
+    the request is untrusted: read-only answers still work, every action is refused.
+    Only text typed or spoken by a user reaches this function; LLM replies, web pages and
+    knowledge-base content are never routed here and can never confirm anything.
     """
-    global jarvis_sleep, memory
     ctx = ctx or CommandContext.untrusted("unspecified")
     cmd = (cmd or "").lower().strip()
     print("CMD:", cmd)
@@ -1272,7 +1474,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         return confirmation_reply
 
     # Personal learning
-    learned = update_profile_from_sentence(cmd)
+    learned = update_profile_from_sentence(cmd, ctx)
     if learned:
         return learned
 
@@ -1284,9 +1486,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     if cmd.startswith("remember that"):
         fact = cmd.replace("remember that", "", 1).strip()
         if fact:
-            memory["notes"].append(fact)
-            save_memory(memory)
-            return "Stored in my memory."
+            return remember_note(fact, ctx)
         return "What should I remember, sir?"
 
     if "what do you remember" in cmd:
@@ -1304,7 +1504,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         or ("reload" in cmd and "knowledge" in cmd)
         or ("reload" in cmd and "note" in cmd)
     ):
-        return knowledge.rebuild_knowledge_base(client)
+        return reload_knowledge(ctx)
 
     if (
         cmd.startswith("search my notes")
@@ -1330,13 +1530,13 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
 
     # Reminders
     if "remind me" in cmd:
-        return set_reminder(cmd)
+        return set_reminder(cmd, ctx)
 
     if "what are my reminders" in cmd or "list my reminders" in cmd:
         return list_reminders()
 
     if "clear reminders" in cmd or "delete all reminders" in cmd:
-        return TOOLS.request("reminders.clear_all", {}, ctx).message
+        return clear_reminders(ctx)
 
     # ===== SECURITY MODE COMMANDS =====
     if (
@@ -1345,7 +1545,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         or "arm security" in cmd
         or "arm the security" in cmd
     ):
-        return enable_security_mode()
+        return enable_security_mode(ctx)
 
     if (
         "disable security mode" in cmd
@@ -1353,7 +1553,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         or "disarm security" in cmd
         or "disarm the security" in cmd
     ):
-        return disable_security_mode()
+        return disable_security_mode(ctx)
 
     if (
         "security status" in cmd
@@ -1363,19 +1563,16 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         return security_status()
 
     if "verify my identity" in cmd or "verify identity" in cmd:
-        ok, msg = security_check()
-        if ok and not msg:
-            return "Identity already verified recently, sir."
-        return msg
+        if not vision.face_available() and is_security_enabled():
+            return vision.unavailable_message()
+        return verify_identity(ctx)
 
     # Sleep
     if "go to sleep" in cmd or "sleep mode" in cmd:
-        jarvis_sleep = True
-        return "Entering sleep mode. Say Jarvis wake up."
+        return set_sleep(True, ctx)
 
     if "wake up" in cmd:
-        jarvis_sleep = False
-        return "I am awake sir."
+        return set_sleep(False, ctx)
 
     if jarvis_sleep:
         return "I am currently in sleep mode. Say Jarvis wake up."
@@ -1383,19 +1580,19 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     # ===== STUDY PLANNER COMMANDS =====
     if "help me learn" in cmd:
         topic = cmd.split("help me learn", 1)[1].strip()
-        return create_study_plan(topic)
+        return create_study_plan(topic, ctx)
 
     if "create a study plan for" in cmd:
         topic = cmd.split("create a study plan for", 1)[1].strip()
-        return create_study_plan(topic)
+        return create_study_plan(topic, ctx)
 
     if "make a study plan for" in cmd:
         topic = cmd.split("make a study plan for", 1)[1].strip()
-        return create_study_plan(topic)
+        return create_study_plan(topic, ctx)
 
     if "make a learning plan for" in cmd:
         topic = cmd.split("make a learning plan for", 1)[1].strip()
-        return create_study_plan(topic)
+        return create_study_plan(topic, ctx)
 
     if "show my study plans" in cmd or "what are my study plans" in cmd:
         return list_study_plans()
@@ -1405,7 +1602,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         return show_study_plan_for(topic)
 
     if "update my progress" in cmd and "for" in cmd:
-        return update_study_progress(cmd)
+        return update_study_progress(cmd, ctx)
 
     # Time / battery
     if "time" in cmd:
@@ -1435,14 +1632,14 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         q = cmd.replace("search", "", 1).strip()
         if not q:
             return "What should I search for, sir?"
-        return web_search_ddg(q)
+        return web_search_ddg(q, ctx)
 
     if "search" in cmd and not cmd.startswith("search "):
         # e.g. "jarvis can you search tesla model 3 review"
         parts = cmd.split("search", 1)
         q = parts[1].strip()
         if q:
-            return web_search_ddg(q)
+            return web_search_ddg(q, ctx)
 
     # ===== SYSTEM INTELLIGENCE COMMANDS =====
     if (
@@ -1462,7 +1659,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
             return "I could not read the CPU usage, sir."
 
     if "temperature" in cmd or "overheating" in cmd or "too hot" in cmd:
-        temp = get_cpu_temperature()
+        temp = get_cpu_temperature(ctx)
         if temp:
             return f"Current CPU temperature is {temp}. Everything looks under control, sir."
         return "I could not read the temperature sensors, but performance seems normal, sir."
@@ -1490,10 +1687,10 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         ("turn on" in cmd or "turn off" in cmd or "switch on" in cmd or "switch off" in cmd)
         and any(word in cmd for word in ["light", "lights", "fan", "ac", "air conditioner", "plug", "socket", "lamp"])
     ):
-        return control_smart_home(cmd)
+        return control_smart_home(cmd, ctx)
 
     if "set temperature" in cmd or "set ac" in cmd:
-        return control_smart_home(cmd)
+        return control_smart_home(cmd, ctx)
 
     # Weather / news
     if "weather" in cmd:
@@ -1504,34 +1701,34 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
 
     # YouTube
     if cmd.startswith("play "):
-        return play_youtube(cmd.replace("play", "", 1).strip())
+        return play_youtube(cmd.replace("play", "", 1).strip(), ctx)
 
     # Open apps / websites
     if cmd.startswith("open "):
         app = cmd.replace("open", "", 1).strip()
-        return launch_any_app(app)
+        return launch_any_app(app, ctx)
 
     # Brightness / volume / screenshot
     if "increase brightness" in cmd or "brightness up" in cmd:
-        return change_brightness_relative("up")
+        return change_brightness_relative("up", ctx=ctx)
 
     if "decrease brightness" in cmd or "brightness down" in cmd:
-        return change_brightness_relative("down")
+        return change_brightness_relative("down", ctx=ctx)
 
     if "increase volume" in cmd:
-        return set_volume(100)
+        return set_volume(100, ctx)
 
     if "decrease volume" in cmd:
-        return set_volume(30)
+        return set_volume(30, ctx)
 
     if "volume" in cmd:
         nums = [int(s) for s in cmd.split() if s.isdigit()]
         if nums:
-            return set_volume(nums[0])
+            return set_volume(nums[0], ctx)
         return "Tell me the volume level, like volume 50."
 
     if "screenshot" in cmd or "screen shot" in cmd:
-        return take_screenshot()
+        return take_screenshot(ctx)
 
     # Vision (optional extra)
     vision_phrases = ("register my face", "remember my face", "do you see me", "who is in front of you",
@@ -1543,26 +1740,16 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         return vision.unavailable_message(hands=True)
 
     if "register my face" in cmd or "remember my face" in cmd:
-        ok = vision.register_face("raj")
-        return "I have registered your face, sir." if ok else "I could not capture your face."
+        return register_face(ctx)
 
     if "do you see me" in cmd or "who is in front of you" in cmd:
-        same, score = vision.recognize_face("raj")
-        if score is None:
-            return "I have no stored face. Say register my face first."
-        return "Yes sir, I see you." if same else "I see someone, but I'm not sure it's you."
+        return recognize_owner(ctx)
 
     if "check my hand" in cmd or "see my hand" in cmd:
-        gesture = vision.detect_hand_gesture()
-        if gesture == "open_palm":
-            return "I see an open palm."
-        elif gesture == "no_hand":
-            return "I do not see any hand."
-        else:
-            return "I see a hand, but I cannot classify the gesture."
+        return detect_hand(ctx)
 
     if "do you see anyone" in cmd or "what do you see" in cmd:
-        return "I can see at least one person." if vision.see_any_person() else "I do not clearly see anyone right now."
+        return detect_person(ctx)
 
     # Small fun personality
     if "roast me" in cmd:
@@ -1597,7 +1784,7 @@ def main():
     start_background_services()
     ctx = CommandContext.local_voice()  # the person at this machine's microphone
     # Boot voice: Tony-ish
-    speak("JARVIS system initializing. Welcome back, sir. You can ask me anything.")
+    speak("JARVIS system initializing. Welcome back, sir. You can ask me anything.", ctx)
     while True:
         text = listen()
         if not text:
@@ -1605,10 +1792,10 @@ def main():
         if WAKE_WORD in text:
             text = text.replace(WAKE_WORD, "").strip()
         if is_exit_command(text):
-            speak("Goodbye, sir.")
+            speak("Goodbye, sir.", ctx)
             break
         reply = handle_command(text, ctx)
-        speak(reply)
+        speak(reply, ctx)
 
 
 if __name__ == "__main__":

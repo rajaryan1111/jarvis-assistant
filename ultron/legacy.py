@@ -25,7 +25,7 @@ class Backend(Protocol):
 
     def status(self) -> dict[str, Any]: ...
 
-    def speak(self, text: str) -> None: ...
+    def speak(self, text: str, ctx: CommandContext) -> str: ...
 
     def start_background(self) -> None: ...
 
@@ -56,8 +56,9 @@ class JarvisLegacyBackend:
     def status(self) -> dict[str, Any]:
         return self.main.get_status()
 
-    def speak(self, text: str) -> None:
-        self.main.speak(text)
+    def speak(self, text: str, ctx: CommandContext) -> str:
+        """Speak through the policy-checked ``audio.speak`` tool as the calling principal."""
+        return self.main.speak(text, ctx)
 
     def start_background(self) -> None:
         self.main.start_background_services()

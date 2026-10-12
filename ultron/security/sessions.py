@@ -87,7 +87,7 @@ class SessionSigner:
 
 
 class UsedNonces:
-    """Remembers consumed login-ticket nonces so each ticket works once."""
+    """Remembers consumed values (login-ticket nonces, logged-out session ids) for a while."""
 
     def __init__(self, retention_seconds: int = 600, clock: Callable[[], float] = time.time) -> None:
         self._seen: dict[str, float] = {}
@@ -95,16 +95,24 @@ class UsedNonces:
         self._retention = retention_seconds
         self._clock = clock
 
+    def _prune(self, now: float) -> None:
+        for key, ts in list(self._seen.items()):
+            if now - ts > self._retention:
+                del self._seen[key]
+
     def consume(self, nonce: str) -> bool:
         now = self._clock()
         with self._lock:
-            for key, ts in list(self._seen.items()):
-                if now - ts > self._retention:
-                    del self._seen[key]
+            self._prune(now)
             if nonce in self._seen:
                 return False
             self._seen[nonce] = now
             return True
+
+    def seen(self, nonce: str) -> bool:
+        with self._lock:
+            self._prune(self._clock())
+            return nonce in self._seen
 
 
 class LoginThrottle:
