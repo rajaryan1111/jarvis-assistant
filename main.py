@@ -21,7 +21,7 @@ import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heav
 import news
 from ultron.config import get_credential, load_dotenv_if_enabled
 from ultron.security.paths import atomic_write_text
-from ultron.security.policy import CommandContext, RiskTier
+from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
 from ultron.tools.macos import (
@@ -1351,13 +1351,15 @@ def _reminder_count_preview(_args) -> str:
 
 
 def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, opener=None,
-                        screenshot_dir=None, temperature_candidates=None) -> ToolRegistry:
+                        screenshot_dir=None, temperature_candidates=None, voice_trust=None) -> ToolRegistry:
     """Every state-changing legacy operation is registered here with its risk tier.
 
     This is the complete list; docs/M1_1_TOOL_SECURITY_BOUNDARY.md mirrors it as the action/risk
     matrix and tests/test_policy_boundary.py fails if the two drift apart.
     """
     registry = ToolRegistry(platform=platform) if platform else ToolRegistry()
+    # How much a spoken request may do (ULTRON_VOICE_TRUST); voice can never approve anything.
+    registry.voice_trust = voice_trust if voice_trust is not None else voice_trust_from_env()
     R = RiskTier
     # --- macOS / system (subprocess, browser) --------------------------------------------
     registry.register(SpeakTool(runner=runner, voice=VOICE))
@@ -1440,7 +1442,11 @@ def _extract_code(text: str):
 
 
 def handle_confirmation_intents(cmd: str, ctx: CommandContext):
-    """'confirm <code>' / 'cancel' for pending actions. Returns a reply, or None if not applicable."""
+    """'confirm <code>' / 'cancel' for pending actions. Returns a reply, or None if not applicable.
+
+    Only a signed-in HUD session (typed) can approve with a code; the registry refuses spoken
+    confirmations and the reply says so. A refusal is final: nothing else is attempted.
+    """
     m = _CONFIRM_RE.match(cmd)
     if m:
         rest = m.group("rest")
@@ -1665,9 +1671,9 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         return "I could not read the temperature sensors, but performance seems normal, sir."
 
     # Destructive actions: the registry checks who is asking and creates a pending action
-    # with a one-time code. Nothing runs until "confirm <code>" (or the HUD button) arrives
-    # from the same authenticated user before it expires. Face-based security mode, when
-    # enabled, is checked again right before execution (confirmation_gate).
+    # bound to these exact arguments. Nothing runs until the signed-in HUD approves it (typed
+    # "confirm <code>" or the CONFIRM button) before it expires; voice can only ask or cancel.
+    # Face-based security mode, when enabled, is checked again right before execution.
     if (
         "clean my system" in cmd
         or "clean system" in cmd

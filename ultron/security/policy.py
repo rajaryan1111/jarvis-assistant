@@ -9,25 +9,41 @@ from web pages, documents, knowledge-base retrieval or LLM output is content,
 never authorisation: such text is never routed back into the command handler,
 and a context marked ``UNTRUSTED`` can never act or confirm.
 
-Decision table (see docs/M1_1_TOOL_SECURITY_BOUNDARY.md):
+Authentication (who is this?) and authorization (may they do this now?) are
+separate (see docs/M1_2_IDENTITY_SESSIONS_VOICE.md):
 
-==================  =========  =================  ======================  =========
-tier                untrusted  internal service   authenticated user      any
-==================  =========  =================  ======================  =========
-OBSERVE             allow      allow              allow
-ROUTINE             deny       allow only if the  allow (no prompt)
-                               tool opts in
-CONSEQUENTIAL       deny       deny               confirm
-DESTRUCTIVE         deny       deny               confirm
-FORBIDDEN                                                                 deny
-==================  =========  =================  ======================  =========
+* ``can_authorize``: an authenticated user channel may *request* actions.
+* ``can_confirm``: only a signed-in HUD session using typed or clicked input may
+  *approve* a pending CONSEQUENTIAL/DESTRUCTIVE action. Voice (microphone, wake
+  word, HUD speech recognition) and bearer-token API clients never can: speech
+  is not proof of identity and a static token in a script is not a person.
+
+Decision table (see docs/M1_1_TOOL_SECURITY_BOUNDARY.md and M1_2):
+
+==================  =========  =================  =====================  ====================
+tier                untrusted  internal service   authenticated user     voice input
+==================  =========  =================  =====================  ====================
+OBSERVE             allow      allow              allow                  allow
+ROUTINE             deny       allow only if the  allow (no prompt)      allow if
+                               tool opts in                              ULTRON_VOICE_TRUST=
+                                                                         routine (default)
+CONSEQUENTIAL       deny       deny               confirm (HUD only)     request only; approve
+DESTRUCTIVE         deny       deny               confirm (HUD only)     in the HUD (standalone
+                                                                         mic loop: deny)
+FORBIDDEN           deny       deny               deny                   deny
+==================  =========  =================  =====================  ====================
 """
 
 from __future__ import annotations
 
+import logging
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from typing import Any
+
+log = logging.getLogger("ultron.security")
 
 
 class RiskTier(IntEnum):
@@ -48,6 +64,32 @@ class Channel(str, Enum):
 
 
 USER_CHANNELS = frozenset({Channel.HUD, Channel.API, Channel.LOCAL_VOICE, Channel.WAKEWORD})
+VOICE_CHANNELS = frozenset({Channel.LOCAL_VOICE, Channel.WAKEWORD})
+
+
+class InputMode(str, Enum):
+    TEXT = "text"  # typed, or a button click in the HUD
+    VOICE = "voice"  # speech recognition (microphone loop, wake word, HUD speech input)
+
+
+class VoiceTrust(str, Enum):
+    """How much a *spoken* request may do (``ULTRON_VOICE_TRUST``). Voice can never approve."""
+
+    OBSERVE = "observe"  # read-only answers only
+    ROUTINE = "routine"  # default: read-only + routine local actions; high-impact needs the HUD
+
+
+def voice_trust_from_env(env: Mapping[str, str] | None = None) -> VoiceTrust:
+    """Read ``ULTRON_VOICE_TRUST``. An unknown value falls back to the *more restrictive* mode."""
+    env = os.environ if env is None else env
+    raw = (env.get("ULTRON_VOICE_TRUST") or "").strip().lower()
+    if not raw:
+        return VoiceTrust.ROUTINE
+    try:
+        return VoiceTrust(raw)
+    except ValueError:
+        log.warning("ULTRON_VOICE_TRUST=%r is not 'routine' or 'observe'; using 'observe'", raw[:20])
+        return VoiceTrust.OBSERVE
 
 
 @dataclass
@@ -58,10 +100,23 @@ class CommandContext:
     channel: Channel
     authenticated: bool
     events: list[tuple[str, Any]] = field(default_factory=list)
+    input_mode: InputMode = InputMode.TEXT
 
     @property
     def can_authorize(self) -> bool:
+        """May *request* actions (subject to the policy)."""
         return self.authenticated and self.channel in USER_CHANNELS
+
+    @property
+    def is_voice(self) -> bool:
+        """Spoken input. Voice is never strong identity: a recording, a speaker or someone
+        nearby sounds the same to the microphone."""
+        return self.input_mode is InputMode.VOICE or self.channel in VOICE_CHANNELS
+
+    @property
+    def can_confirm(self) -> bool:
+        """May *approve* a pending high-impact action: a signed-in HUD session, typed/clicked."""
+        return self.can_authorize and self.channel is Channel.HUD and not self.is_voice
 
     @property
     def is_internal(self) -> bool:
@@ -73,7 +128,10 @@ class CommandContext:
 
     @classmethod
     def local_voice(cls) -> CommandContext:
-        return cls(principal="local-cli", channel=Channel.LOCAL_VOICE, authenticated=True)
+        """The standalone ``python main.py`` microphone loop. Local presence is assumed for
+        routine requests; it is not proof of identity and can never approve anything."""
+        return cls(principal="local-cli", channel=Channel.LOCAL_VOICE, authenticated=True,
+                   input_mode=InputMode.VOICE)
 
     @classmethod
     def internal(cls, service: str) -> CommandContext:
@@ -93,12 +151,33 @@ class PolicyDecision:
     reason: str
 
 
-def evaluate(risk: RiskTier, ctx: CommandContext, *, internal_ok: bool = False) -> PolicyDecision:
+VOICE_READ_ONLY_REASON = (
+    "Voice commands are limited to read-only requests here (ULTRON_VOICE_TRUST=observe). "
+    "Use the HUD for this."
+)
+STANDALONE_VOICE_REASON = (
+    "High-impact actions can't be approved by voice alone. Start the HUD server (python server.py), "
+    "open the HUD (python -m ultron open-hud) and ask there."
+)
+
+
+def evaluate(
+    risk: RiskTier,
+    ctx: CommandContext,
+    *,
+    internal_ok: bool = False,
+    voice_trust: VoiceTrust = VoiceTrust.ROUTINE,
+) -> PolicyDecision:
     """Decide whether an action of ``risk`` may run for ``ctx``.
 
     ``internal_ok`` is declared by the tool (``ToolSpec.internal_ok``): it lets a background
     service of this process run that ROUTINE tool (e.g. speak a due reminder). Internal
     services can never trigger anything that needs confirmation.
+
+    A CONFIRM decision only creates a pending action; approving it is a separate step that
+    requires ``ctx.can_confirm`` (see ``ToolRegistry.confirm``). The standalone microphone
+    loop runs in its own process with no HUD attached, so a pending action it created could
+    never be approved there: it is denied with guidance instead.
     """
     if risk >= RiskTier.FORBIDDEN:
         return PolicyDecision(Decision.DENY, "This action is never allowed.")
@@ -113,6 +192,10 @@ def evaluate(risk: RiskTier, ctx: CommandContext, *, internal_ok: bool = False) 
             Decision.DENY,
             "Actions can only be requested by an authenticated user, not by untrusted or derived content.",
         )
+    if ctx.is_voice and voice_trust is VoiceTrust.OBSERVE:
+        return PolicyDecision(Decision.DENY, VOICE_READ_ONLY_REASON)
     if risk >= RiskTier.CONSEQUENTIAL:
+        if ctx.channel is Channel.LOCAL_VOICE:
+            return PolicyDecision(Decision.DENY, STANDALONE_VOICE_REASON)
         return PolicyDecision(Decision.CONFIRM, "This action needs your explicit confirmation.")
     return PolicyDecision(Decision.ALLOW, "Routine action by an authenticated user.")

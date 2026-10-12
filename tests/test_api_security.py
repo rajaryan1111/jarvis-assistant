@@ -244,8 +244,12 @@ def test_session_cookie_flags(client, token):
     assert token not in cookie
 
 
+def _generation(app) -> str:
+    return app.extensions["ultron"]["session_store"].load().generation
+
+
 def test_login_ticket_flow_is_single_use(client, token):
-    ticket = SessionSigner(token, 3600).issue_login_ticket()
+    ticket = SessionSigner(token, 3600).issue_login_ticket(_generation(client.application))
     assert client.post("/login", json={"ticket": ticket}, headers=ORIGIN).status_code == 200
     fresh = make_client(client.application)
     assert fresh.post("/login", json={"ticket": ticket}, headers=ORIGIN).status_code == 401
@@ -277,7 +281,7 @@ def test_hud_confirm_flow_is_bound_to_session_and_single_use(app, client, token,
     h = {**ORIGIN, "X-CSRF-Token": csrf}
     res = client.post("/ask", json={"message": "shutdown system"}, headers=h).get_json()
     pending = res["pending_action"]
-    assert set(pending) == {"action_id", "tool", "summary", "expires_in"}
+    assert set(pending) == {"action_id", "tool", "summary", "expires_in", "requested_via"}
     assert pending["tool"] == "system.shutdown" and fake_runner.calls == []
 
     # Another session (or the bearer client) cannot confirm this action.

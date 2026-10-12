@@ -54,8 +54,14 @@ The local API token is generated on your machine and never committed. Rotate it 
 copied somewhere:
 
 ```bash
-uv run ultron token rotate    # invalidates every HUD session immediately after a server restart
+uv run ultron token rotate          # retires the old token for good and logs out every HUD session;
+                                    # a running server picks it up immediately (no restart needed)
+uv run ultron token rotate --client # the same for the wake-word client token
+uv run ultron sessions revoke-all   # log out every HUD session without changing the token
 ```
+
+If `ULTRON_API_TOKEN` is set in your shell or `.env`, rotation retires that value too, and the server refuses
+it until you remove it. See [M1_2_IDENTITY_SESSIONS_VOICE.md](M1_2_IDENTITY_SESSIONS_VOICE.md#4-rotation-behaviour).
 
 ## 5. Historical exposure (owner decision, not done in M1)
 

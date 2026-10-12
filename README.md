@@ -83,8 +83,14 @@ echo "ULTRON_HAND_LANDMARKER_MODEL=$PWD/models/hand_landmarker.task" >> .env
    ```
 
    Other commands: `token path`, `token show` (prints it only when you ask), `token copy` (macOS clipboard),
-   and `token rotate` (replaces it and logs out every HUD session). As an alternative to the file, you can set
-   `ULTRON_API_TOKEN` (32+ random characters) in your environment.
+   and `token rotate` (replaces it, retires the old one permanently and logs out every HUD session; a running
+   server picks it up immediately). `sessions revoke-all` logs out every HUD session; `sessions reset` is the
+   owner recovery if the session state file is ever corrupt. As an alternative to the file, you can set
+   `ULTRON_API_TOKEN` (32+ random characters) in your environment, but the file is preferred because
+   rotation can replace it.
+
+   For the wake-word listener, create a separate, limited **client token**: `uv run ultron token init --client`.
+   It can send commands but can never log in to the HUD or approve anything.
 
 ## Start
 
@@ -102,8 +108,15 @@ The other entry points:
 
 ```bash
 uv run python main.py              # microphone loop (needs the voice extra); say "exit" or "goodbye" to quit
-uv run python wakeword_listener.py # wake word; needs the server running, PICOVOICE_ACCESS_KEY and the API token
+uv run python wakeword_listener.py # wake word; needs the server running, PICOVOICE_ACCESS_KEY and the client token
 ```
+
+Voice stays the main way to use JARVIS: read-only and routine commands (time, weather, open apps, volume,
+notes, reminders, ...) just work. **High-impact actions** (shut down, restart, clear caches or all reminders,
+turn off security mode, replace your face) can be *requested* by voice but must be **approved in the
+signed-in HUD** with the CONFIRM button. No code is spoken, and "confirm" by voice is refused, because a voice
+(or a recording of one) is not proof of who is speaking. `ULTRON_VOICE_TRUST=observe` limits voice to read-only
+answers. Details: [voice trust model](docs/M1_2_IDENTITY_SESSIONS_VOICE.md#5-voice-trust-model).
 
 ## Security model
 
@@ -112,9 +125,17 @@ The assistant can control this computer, so the server is built to fail closed:
 - **Loopback only.** It binds to `127.0.0.1`. Other addresses are refused unless you set
   `ULTRON_ALLOW_NON_LOOPBACK=1` (not recommended: traffic is plain HTTP). Debug mode is off by default and is
   never allowed on a non-loopback address.
-- **Authentication on every sensitive endpoint.** `/status`, `/ask`, `/speak`, `/confirm`, `/cancel` and
-  `/logout` require either `Authorization: Bearer <token>` (CLI and wake-word clients) or the HUD session
-  cookie. If no token is configured, these endpoints return `503`, and the login page explains the setup.
+- **Authentication on every sensitive endpoint.** `/status`, `/ask`, `/speak`, `/confirm`, `/cancel`,
+  `/pending` and `/logout` require either `Authorization: Bearer <token>` (wake-word and other clients) or the
+  HUD session cookie. If no token is configured, these endpoints return `503`, and the login page explains the
+  setup. Tokens are never accepted in URLs.
+- **Sessions that stay revoked.** Logout, `sessions revoke-all` and `token rotate` are recorded in a private
+  session state file (`0600`, no secrets, only hashes), so they survive restarts. Expiry is enforced by the
+  server against the current `ULTRON_SESSION_HOURS`. If that file is ever corrupt or unsafe, sign-in fails
+  closed (`503`) and tells you to run `uv run ultron sessions reset`.
+- **Authentication is not authorization.** Bearer tokens and voice can *request* actions, but only a
+  signed-in HUD session (typed or clicked) can *approve* one. The client token can't even log in. Token and
+  session administration is CLI-only. This does not protect against someone who controls your OS account.
 - **Cross-site protection.** The server checks the `Host` header against an allowlist (DNS-rebinding
   defence) and rejects disallowed `Origin` values. It never sends CORS headers. State-changing browser
   requests need an allowed `Origin`/`Referer`, a per-session `X-CSRF-Token` and `Content-Type:
@@ -125,11 +146,12 @@ The assistant can control this computer, so the server is built to fail closed:
   registry. Read-only commands work for anyone. Routine actions run without prompts for an authenticated
   user. See the [action/risk matrix](docs/M1_1_TOOL_SECURITY_BOUNDARY.md#action--risk-matrix).
 - **Confirmation for high-impact actions.** Turning off security mode, re-registering your face, deleting
-  all reminders, clearing user caches, restart and shut down create a *pending action* with a one-time
-  4-digit code. It runs only after `confirm <code>` (or the HUD's confirm button) from the **same**
-  authenticated user, within 60 seconds. It is single use, and three wrong codes cancel it. A bare
-  "confirm shutdown" does nothing. While security mode is on, the confirmation also needs the face check,
-  so turning the mode off can't skip it (owner recovery: `uv run ultron security disable` on the Mac).
+  all reminders, clearing user caches, restart and shut down create a *pending action* bound to the exact
+  arguments. It runs only after the signed-in HUD approves it: the CONFIRM button, or typing the one-time
+  code shown for requests made in the HUD. It must happen within 60 seconds (120 for requests made by voice).
+  It is single use, and three wrong codes cancel it. A bare "confirm shutdown" does nothing, and **no spoken
+  confirmation is ever accepted**. While security mode is on, the approval also needs the face check, so
+  turning the mode off can't skip it (owner recovery: `uv run ultron security disable` on the Mac).
 - **Untrusted content never authorises anything.** Commands without an authenticated context (such as
   `jarvis_logic.handle_command(text)` or a direct call to a helper in `main.py`) get read-only answers only.
   Knowledge-base text, web pages and LLM output can't request or confirm actions and are never executed.
@@ -165,7 +187,10 @@ See the M1 report for what was verified where.
 | Symptom | Fix |
 |---|---|
 | HUD shows "Authentication is not configured" | `uv run ultron token init`, then restart the server |
-| `401` / redirected to `/login` | Session expired, or the token was rotated. Run `uv run ultron open-hud` |
+| `401` / redirected to `/login` | Session expired, you logged out, or the token was rotated. Run `uv run ultron open-hud` |
+| `503 session_state_unavailable` | The session state file is corrupt or has unsafe permissions: `uv run ultron sessions reset`, then `open-hud` |
+| `503 token_retired` | You rotated the token but `ULTRON_API_TOKEN` still holds the old one. Remove it from your shell/`.env` |
+| "I can't accept a spoken confirmation" | By design: press CONFIRM in the signed-in HUD |
 | `403 forbidden_origin` / `csrf_failed` | Use the HUD from `http://127.0.0.1:5001` (or `localhost:5001`) and reload the page |
 | `400 invalid_host` | Open the HUD at `127.0.0.1` or `localhost`, not via another hostname |
 | "The API token file … is readable by other users" | `chmod 600 "$(uv run ultron token path)"` |

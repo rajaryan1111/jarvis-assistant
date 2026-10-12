@@ -116,12 +116,16 @@ document.addEventListener("DOMContentLoaded", () => {
     // --------------------------
     //   BACKEND COMMUNICATION
     // --------------------------
-    async function sendToJarvis(text) {
+    // source "voice" marks speech-recognised commands: the server then applies the voice trust
+    // rules (voice can ask for high-impact actions but never approve them).
+    async function sendToJarvis(text, source) {
         if (!text) return;
         addMessage(text, "user");
 
         try {
-            const data = await apiFetch("/ask", { method: "POST", body: { message: text } });
+            const body = { message: text };
+            if (source === "voice") body.input = "voice";
+            const data = await apiFetch("/ask", { method: "POST", body: body });
             const reply = data.reply || "I did not get a reply from the server.";
             addMessage(reply, "jarvis");
             if (data.pending_action) {
@@ -141,15 +145,22 @@ document.addEventListener("DOMContentLoaded", () => {
     //   PENDING ACTION CONFIRMATION
     // --------------------------
     // Destructive actions (shutdown, restart, cache cleanup, clearing reminders) only run
-    // after the user confirms *this specific* pending action before it expires.
+    // after the user confirms *this specific* pending action before it expires. Requests made
+    // by voice (wake word) or API clients can only be approved here, so they are polled.
+    const shownPending = new Set();
+
     function showPendingAction(pending) {
         if (!chatBox || !pending || !pending.action_id) return;
+        if (shownPending.has(pending.action_id)) return;
+        shownPending.add(pending.action_id);
         const box = document.createElement("div");
         box.className = "pending-action";
 
         const label = document.createElement("div");
         label.className = "pending-action-text";
-        label.textContent = "CONFIRM: " + (pending.summary || pending.tool || "pending action");
+        const via = pending.requested_via && pending.requested_via !== "hud"
+            ? " [requested by " + pending.requested_via + "]" : "";
+        label.textContent = "CONFIRM: " + (pending.summary || pending.tool || "pending action") + via;
         box.appendChild(label);
 
         const buttons = document.createElement("div");
@@ -193,8 +204,20 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         confirmBtn.addEventListener("click", () => resolve("/confirm", { action_id: pending.action_id }));
-        cancelBtn.addEventListener("click", () => resolve("/cancel", {}));
+        cancelBtn.addEventListener("click", () => resolve("/cancel", { action_id: pending.action_id }));
     }
+
+    async function pollPending() {
+        if (document.hidden) return;
+        try {
+            const data = await apiFetch("/pending");
+            (data.pending || []).forEach(showPendingAction);
+        } catch (e) {
+            // ignore errors
+        }
+    }
+
+    setInterval(pollPending, 3000);
 
     // --------------------------
     //   STATUS POLLING (HUD)
@@ -295,7 +318,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             // Normal command → backend
-            sendToJarvis(cmd);
+            sendToJarvis(cmd, "voice");
 
             // 🔁 IMPORTANT:
             // After every full command, reset recognition so browser

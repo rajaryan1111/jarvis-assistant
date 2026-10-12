@@ -3,8 +3,14 @@
 Requirements (optional "wakeword" extra): ``uv sync --extra wakeword``.
 Configuration (in ``.env`` or your shell, never in this file):
   PICOVOICE_ACCESS_KEY  your Picovoice AccessKey (https://console.picovoice.ai/)
-  ULTRON_API_TOKEN / API token file  created by ``python -m ultron token init``
+  client token          created by ``python -m ultron token init --client`` (recommended: it can
+                        send commands but can never log in to the HUD or approve anything);
+                        falls back to the owner API token (``python -m ultron token init``)
 The HUD server (``python server.py``) must be running.
+
+Voice is not proof of identity: anything the microphone hears is treated as a spoken request.
+Read-only and routine commands run directly; high-impact ones (shutdown, restart, deleting
+data, security changes) are only *requested* here and must be approved in the signed-in HUD.
 """
 
 import os
@@ -15,7 +21,7 @@ import requests
 
 from ultron.config import MissingCredentialError, load_dotenv_if_enabled, load_settings, require_credential
 from ultron.security.redact import redact
-from ultron.security.tokens import load_api_token
+from ultron.security.tokens import load_api_token, load_client_token
 
 # Keyword file path (jarvis.ppn in the project folder)
 KEYWORD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis.ppn")
@@ -35,7 +41,7 @@ class ServerClient:
     def _post(self, path: str, payload: dict) -> dict:
         res = self.session.post(f"{self.base_url}{path}", json=payload, timeout=REQUEST_TIMEOUT)
         if res.status_code == 401:
-            raise RuntimeError("the server rejected the API token (run `python -m ultron token show` to check it)")
+            raise RuntimeError("the server rejected the token (check `python -m ultron doctor`)")
         res.raise_for_status()
         return res.json()
 
@@ -83,10 +89,17 @@ def main() -> int:
         return 2
 
     settings = load_settings()
-    token_result = load_api_token(settings)
-    if not token_result.ok:
+    token_result = load_client_token(settings)
+    if token_result.problem:
         print(f"ERROR: {token_result.problem}", file=sys.stderr)
         return 2
+    if not token_result.ok:
+        token_result = load_api_token(settings)
+        if not token_result.ok:
+            print(f"ERROR: {token_result.problem}", file=sys.stderr)
+            return 2
+        print("Note: using the owner API token. Run `python -m ultron token init --client` to give the "
+              "listener a limited token instead.", file=sys.stderr)
 
     if not os.path.exists(KEYWORD_PATH):
         print(f"ERROR: Could not find keyword file: {KEYWORD_PATH}", file=sys.stderr)

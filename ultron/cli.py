@@ -2,11 +2,18 @@
 
 Commands
   serve            start the local HUD/API server (same as ``python server.py``)
-  token init       create the API token file (0600) if missing; never prints the token
-  token rotate     replace the token (logs out every HUD session)
+  token init       create the owner API token file (0600) if missing; never prints the token
+  token rotate     replace the token, retire the old one for good and log out every HUD
+                   session (persists across restarts; a running server picks it up at once)
   token show       print the token (only when you explicitly ask)
   token copy       copy the token to the macOS clipboard
   token path       print where the token file lives
+  token ... --client   the same for the limited client token used by the wake-word listener
+                   (it can send commands but can never log in to the HUD or approve
+                   anything); ``token revoke --client`` retires and deletes it
+  sessions status      show the persistent session state (no secret values)
+  sessions revoke-all  log out every HUD session and invalidate outstanding login links
+  sessions reset       owner recovery when the session state is corrupt (logs everyone out)
   open-hud         open the HUD with a one-time, short-lived login link
   doctor           report configuration and optional-feature status (no secret values)
   check-secrets    scan files that could be committed for hardcoded credentials
@@ -34,8 +41,9 @@ from ultron.config import (
     load_settings,
 )
 from ultron.security.secret_scan import scan_repository
+from ultron.security.session_state import SessionStateError, SessionStateStore
 from ultron.security.sessions import SessionSigner
-from ultron.security.tokens import load_api_token, write_token_file
+from ultron.security.tokens import load_api_token, load_client_token, write_token_file
 from ultron.tools.process import run_command
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -47,32 +55,87 @@ def _cmd_serve(_args: argparse.Namespace) -> int:
     return run()
 
 
+def _store(settings) -> SessionStateStore:
+    return SessionStateStore(settings.session_state_file)
+
+
+def _read_token_file(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def _retire(store: SessionStateStore, tokens: list[str], *, revoke_sessions: bool) -> None:
+    """Retire tokens even if the session state is corrupt: rotation is itself a recovery step."""
+    try:
+        store.retire_tokens(tokens, revoke_sessions=revoke_sessions)
+    except SessionStateError as exc:
+        print(f"Session state was unusable ({exc.problem}); resetting it (this logs out every HUD session).",
+              file=sys.stderr)
+        store.reset()
+        store.retire_tokens(tokens, revoke_sessions=revoke_sessions)
+
+
 def _cmd_token(args: argparse.Namespace) -> int:
     settings = load_settings()
-    path = settings.api_token_file
+    client = bool(getattr(args, "client", False))
+    path = settings.client_token_file if client else settings.api_token_file
+    env_name = "ULTRON_CLIENT_TOKEN" if client else "ULTRON_API_TOKEN"
+    label = "client token" if client else "API token"
+    loader = load_client_token if client else load_api_token
     if args.action == "path":
         print(path)
         return 0
+    if args.action == "revoke":
+        if not client:
+            print("The owner API token cannot be revoked without a replacement; use `token rotate`.", file=sys.stderr)
+            return 2
+        old = [t for t in (_read_token_file(path), os.environ.get(env_name, "").strip()) if t]
+        _retire(_store(settings), old, revoke_sessions=False)
+        if path.exists():
+            path.unlink()
+        print(f"Client token revoked{' and deleted' if old else ''}. It will never be accepted again.")
+        if os.environ.get(env_name):
+            print(f"Remove {env_name} from your shell/.env as well.")
+        return 0
     if args.action in ("init", "rotate"):
-        if os.environ.get("ULTRON_API_TOKEN"):
-            print("Note: ULTRON_API_TOKEN is set in the environment and takes precedence over the token file.")
+        env_set = bool(os.environ.get(env_name, "").strip())
         if path.exists() and args.action == "init":
-            result = load_api_token(settings, env={})
+            result = loader(settings, env={})
             if result.problem:
                 print(f"Token file exists but is not usable: {result.problem}", file=sys.stderr)
                 return 1
-            print(f"API token already exists at {path} (not shown). Use `token rotate` to replace it.")
+            print(f"{label.capitalize()} already exists at {path} (not shown). Use `token rotate` to replace it.")
+            if env_set:
+                print(f"Note: {env_name} is set in the environment and takes precedence over the token file.")
             return 0
-        write_token_file(path, overwrite=True)
-        print(f"{'Rotated' if args.action == 'rotate' else 'Created'} API token at {path} (permissions 600).")
         if args.action == "rotate":
-            print("Restart the server; all existing HUD sessions are now invalid.")
-        print("Use `python -m ultron open-hud` to log in, or `python -m ultron token show` to view it.")
+            # Retire every token that could currently be in use (file *and* environment), so the
+            # old one is refused even if it is still configured somewhere, and (owner token)
+            # log out every HUD session. This is persisted before the new token is written.
+            old = [t for t in (_read_token_file(path), os.environ.get(env_name, "").strip()) if t]
+            _retire(_store(settings), old, revoke_sessions=not client)
+        write_token_file(path, overwrite=True)
+        print(f"{'Rotated' if args.action == 'rotate' else 'Created'} {label} at {path} (permissions 600).")
+        if args.action == "rotate":
+            if client:
+                print("The old client token is retired. Restart the wake-word listener so it reads the new one.")
+            else:
+                print("The old token is retired and every HUD session is logged out. A running server picks up "
+                      "the new token immediately; log in again with `python -m ultron open-hud`.")
+        if env_set:
+            print(f"WARNING: {env_name} is set in your shell or .env and overrides the token file. "
+                  + ("The old value is now retired and will be refused: remove it." if args.action == "rotate"
+                     else "Remove it to use the file."), file=sys.stderr)
+        if not client and args.action == "init":
+            print("Use `python -m ultron open-hud` to log in, or `python -m ultron token show` to view it.")
         return 0
 
-    result = load_api_token(settings)
+    result = loader(settings)
     if not result.ok:
-        print(result.problem, file=sys.stderr)
+        print(result.problem or f"No {label} is configured. Run `python -m ultron token init"
+              f"{' --client' if client else ''}`.", file=sys.stderr)
         return 1
     if args.action == "show":
         print(result.token)
@@ -85,9 +148,51 @@ def _cmd_token(args: argparse.Namespace) -> int:
         if not copied.ok:
             print("Could not copy to the clipboard.", file=sys.stderr)
             return 1
-        print("API token copied to the clipboard.")
+        print(f"{label.capitalize()} copied to the clipboard.")
         return 0
     return 2
+
+
+def _cmd_sessions(args: argparse.Namespace) -> int:
+    settings = load_settings()
+    store = _store(settings)
+    if args.action == "status":
+        try:
+            state = store.load()
+        except SessionStateError as exc:
+            print(f"[FAIL] session state: {exc}", file=sys.stderr)
+            return 1
+        print(f"Session state OK at {store.path}: {len(state.revoked)} logged-out session(s) remembered, "
+              f"{len(state.retired_tokens)} retired token(s).")
+        return 0
+    if args.action == "revoke-all":
+        try:
+            store.revoke_all()
+        except SessionStateError as exc:
+            print(f"Could not update the session state: {exc}", file=sys.stderr)
+            return 1
+        print("Every HUD session and outstanding login link is now invalid (effective immediately, also after "
+              "restarts). Log in again with `python -m ultron open-hud`.")
+        return 0
+    # reset (owner recovery)
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print("Refusing to reset the session state without confirmation; re-run with --yes.", file=sys.stderr)
+            return 1
+        if input("Type RESET to log out every HUD session and rebuild the session state: ").strip() != "RESET":
+            print("Not changed.")
+            return 1
+    try:
+        kept = store.reset()
+    except SessionStateError as exc:
+        print(f"Could not rebuild the session state: {exc.problem} Check permissions on {store.path.parent}.",
+              file=sys.stderr)
+        return 1
+    print("Session state rebuilt; every HUD session is logged out.")
+    if not kept:
+        print("The old file was unreadable, so its list of retired tokens was lost. If you rotated a token "
+              "because it leaked, run `python -m ultron token rotate` again.", file=sys.stderr)
+    return 0
 
 
 def _cmd_open_hud(_args: argparse.Namespace) -> int:
@@ -96,7 +201,12 @@ def _cmd_open_hud(_args: argparse.Namespace) -> int:
     if not result.ok:
         print(result.problem, file=sys.stderr)
         return 1
-    ticket = SessionSigner(result.token, settings.session_ttl_seconds).issue_login_ticket()
+    try:
+        generation = _store(settings).load().generation
+    except SessionStateError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    ticket = SessionSigner(result.token, settings.session_ttl_seconds).issue_login_ticket(generation)
     url = f"{settings.local_base_url}/login#ticket={ticket}"  # fragment: never sent to the server or its logs
     browser_app = os.environ.get("ULTRON_BROWSER_APP")
     if sys.platform == "darwin" and browser_app:
@@ -130,9 +240,31 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     token = load_api_token(settings)
     if token.ok:
         print(f"[ok]   API token configured (source: {token.source})")
+        if token.source == "env":
+            print("[--]   ULTRON_API_TOKEN overrides the token file; `token rotate` will retire it, "
+                  "so prefer the file.")
     else:
         problems += 1
         print(f"[FAIL] API token: {token.problem}")
+    client = load_client_token(settings)
+    if client.ok:
+        print(f"[ok]   client token configured for the wake-word listener (source: {client.source})")
+    elif client.problem:
+        problems += 1
+        print(f"[FAIL] client token: {client.problem}")
+    else:
+        print("[--]   no client token: the wake-word listener would use the owner token "
+              "(run `python -m ultron token init --client`)")
+    try:
+        state = _store(settings).load()
+        if token.ok and state.is_retired(token.token):
+            problems += 1
+            print("[FAIL] the configured API token has been retired by `token rotate`; remove the old value.")
+        else:
+            print("[ok]   session state readable (persistent logout/rotation revocation)")
+    except SessionStateError as exc:
+        problems += 1
+        print(f"[FAIL] session state: {exc}")
 
     for name, configured in credential_status().items():
         state = "configured" if configured else "not set (feature disabled)"
@@ -205,9 +337,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("serve", help="start the local HUD/API server").set_defaults(func=_cmd_serve)
-    tok = sub.add_parser("token", help="manage the local API token")
-    tok.add_argument("action", choices=["init", "rotate", "show", "copy", "path"])
+    tok = sub.add_parser("token", help="manage the local API token (or, with --client, the client token)")
+    tok.add_argument("action", choices=["init", "rotate", "show", "copy", "path", "revoke"])
+    tok.add_argument("--client", action="store_true",
+                     help="the limited wake-word/client token instead of the owner token")
     tok.set_defaults(func=_cmd_token)
+    ses = sub.add_parser("sessions", help="HUD session revocation and recovery")
+    ses.add_argument("action", choices=["status", "revoke-all", "reset"])
+    ses.add_argument("--yes", action="store_true", help="reset without asking for typed confirmation")
+    ses.set_defaults(func=_cmd_sessions)
     sub.add_parser("open-hud", help="open the HUD with a one-time login link").set_defaults(func=_cmd_open_hud)
     sub.add_parser("doctor", help="check configuration and optional features").set_defaults(func=_cmd_doctor)
     cs = sub.add_parser("check-secrets", help="scan for hardcoded credentials")

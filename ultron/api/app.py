@@ -7,22 +7,31 @@ Security model (see README "Security model"):
 * ``Host`` header allowlist (DNS-rebinding defence) and ``Origin`` allowlist on
   every request; no CORS headers are ever sent.
 * Protected endpoints accept either
-  - ``Authorization: Bearer <API token>`` (CLI / wake-word clients), or
-  - the HUD session cookie (HttpOnly, SameSite=Strict, HMAC-signed) **plus**,
-    for state-changing requests, an allowed ``Origin`` and a per-session
-    ``X-CSRF-Token`` header.
+  - ``Authorization: Bearer <owner API token or client token>`` (wake-word listener,
+    scripts), or
+  - the HUD session cookie (HttpOnly, SameSite=Strict, HMAC-signed, bound to the
+    persistent session generation) **plus**, for state-changing requests, an allowed
+    ``Origin`` and a per-session ``X-CSRF-Token`` header.
+* Authentication is not authorization: bearer clients and voice input can request
+  actions but only a HUD session (typed/clicked) can approve a pending high-impact
+  action (``CommandContext.can_confirm``). Only the owner token can log in.
+* Logout, "revoke all" and token rotation persist in the session state file and survive
+  restarts; token files are re-read when they change. Corrupt or unavailable session
+  state fails closed (503) with an owner recovery command.
 * State-changing endpoints require ``Content-Type: application/json``.
 * If no valid API token is configured, protected endpoints fail closed (503).
-* The API token is never rendered into pages, sent to the browser or logged.
+* Tokens are never accepted in URLs, never rendered into pages, sent to the browser or
+  logged; session ids are logged only as non-reversible labels.
 """
 
 from __future__ import annotations
 
 import functools
-import hmac
 import logging
 import sys
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -31,10 +40,11 @@ from flask import Flask, g, jsonify, make_response, redirect, render_template, r
 
 from ultron.config import ConfigurationError, Settings, load_dotenv_if_enabled, load_settings
 from ultron.legacy import Backend, JarvisLegacyBackend
-from ultron.security.policy import Channel, CommandContext
+from ultron.security.policy import Channel, CommandContext, InputMode
 from ultron.security.redact import install_log_redaction
-from ultron.security.sessions import LoginThrottle, SessionSigner, UsedNonces
-from ultron.security.tokens import TokenLoadResult, load_api_token
+from ultron.security.session_state import SessionState, SessionStateError, SessionStateStore
+from ultron.security.sessions import LoginThrottle, SessionClaims, SessionSigner, secret_equals, session_label
+from ultron.security.tokens import TokenLoadResult, TokenSource, load_api_token, load_client_token
 
 log = logging.getLogger("ultron.api")
 
@@ -49,10 +59,32 @@ CSP = (
     "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 )
 
+LOGIN_TICKET_MAX_AGE = 120
+RETIRED_NOTICE = (
+    "The configured API token was rotated and is no longer accepted. If ULTRON_API_TOKEN is set in "
+    "your shell or .env, remove it (the token file is used instead), then restart the server."
+)
+
+
 def _error(status: int, code: str, message: str):
     resp = jsonify({"error": code, "message": message})
     resp.status_code = status
     return resp
+
+
+class _AuthUnavailable(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+@dataclass(frozen=True)
+class _Auth:
+    owner_token: str
+    client_token: str | None
+    signer: SessionSigner
+    state: SessionState
 
 
 def create_app(
@@ -60,10 +92,14 @@ def create_app(
     *,
     backend: Backend | None = None,
     token_result: TokenLoadResult | None = None,
+    client_token_result: TokenLoadResult | None = None,
+    session_store: SessionStateStore | None = None,
+    clock: Callable[[], float] = time.time,
 ) -> Flask:
     settings = settings or load_settings()
-    token_result = token_result or load_api_token(settings)
     backend = backend or JarvisLegacyBackend()
+    tokens = TokenSource(settings, owner=token_result, client=client_token_result)
+    store = session_store or SessionStateStore(settings.session_state_file, clock=clock)
 
     app = Flask(
         "ultron",
@@ -71,15 +107,45 @@ def create_app(
         static_folder=str(PROJECT_ROOT / "static"),
     )
     app.config.update(MAX_CONTENT_LENGTH=16 * 1024, JSON_SORT_KEYS=False)
-    app.extensions["ultron"] = {"settings": settings, "backend": backend, "token_ok": token_result.ok}
+    app.extensions["ultron"] = {"settings": settings, "backend": backend, "session_store": store}
 
-    api_token = token_result.token if token_result.ok else None
-    signer = SessionSigner(api_token, settings.session_ttl_seconds) if api_token else None
-    throttle = LoginThrottle()
-    used_tickets = UsedNonces()
-    # Logged-out sessions stay rejected until their cookie would have expired anyway.
-    revoked_sessions = UsedNonces(retention_seconds=settings.session_ttl_seconds + 60)
-    setup_message = token_result.problem or "Authentication is not configured."
+    throttle = LoginThrottle(clock=clock)
+    signer_cache: dict[str, SessionSigner] = {}
+    # Defence in depth: logged-out session ids are also refused in memory, so a logout still
+    # holds in this process even if recording it on disk failed (that failure is reported).
+    logged_out: set[str] = set()
+
+    def _signer_for(owner_token: str) -> SessionSigner:
+        signer = signer_cache.get(owner_token)
+        if signer is None:
+            signer_cache.clear()  # the token changed (rotation): forget the old keys
+            signer = signer_cache[owner_token] = SessionSigner(owner_token, settings.session_ttl_seconds, clock=clock)
+        return signer
+
+    def _auth() -> _Auth:
+        """Current credentials and session state. Raises _AuthUnavailable to fail closed."""
+        owner = tokens.owner()
+        if not owner.ok or owner.token is None:
+            raise _AuthUnavailable("auth_not_configured", owner.problem or "Authentication is not configured.")
+        try:
+            state = store.load()
+        except SessionStateError as exc:
+            log.error("session state unavailable: %s", exc.problem)
+            raise _AuthUnavailable("session_state_unavailable", exc.user_message) from None
+        if state.is_retired(owner.token):
+            log.error("the configured owner API token has been retired by `token rotate`")
+            raise _AuthUnavailable("token_retired", RETIRED_NOTICE)
+        client = tokens.client()
+        client_token = client.token if client.ok else None
+        if client_token is not None and (state.is_retired(client_token) or client_token == owner.token):
+            client_token = None
+        return _Auth(owner.token, client_token, _signer_for(owner.token), state)
+
+    def _try_auth() -> tuple[_Auth | None, str]:
+        try:
+            return _auth(), ""
+        except _AuthUnavailable as exc:
+            return None, exc.message
 
     allowed_hosts = settings.allowed_hosts
     allowed_origins = settings.allowed_origins
@@ -120,38 +186,56 @@ def create_app(
             resp.headers["Cache-Control"] = "no-store"
         return resp
 
-    def _session_id() -> str | None:
-        if signer is None:
+    def _session(auth: _Auth) -> SessionClaims | None:
+        """Signature, generation, expiry/lifetime (server-side) and persistent revocation."""
+        claims = auth.signer.parse(request.cookies.get(SessionSigner.COOKIE_NAME), auth.state.generation)
+        if claims is None or claims.session_id in logged_out or auth.state.is_revoked(claims.session_id):
             return None
-        session_id = signer.verify(request.cookies.get(SessionSigner.COOKIE_NAME))
-        if session_id is not None and revoked_sessions.seen(session_id):
-            return None
-        return session_id
+        return claims
 
     def protected(state_changing: bool) -> Callable:
         def decorator(view: Callable) -> Callable:
             @functools.wraps(view)
             def wrapper(*args, **kwargs):
-                if signer is None or api_token is None:
-                    return _error(503, "auth_not_configured", setup_message)
+                try:
+                    auth = _auth()
+                except _AuthUnavailable as exc:
+                    return _error(503, exc.code, exc.message)
+                g.auth = auth
+                g.session = None
 
                 auth_header = request.headers.get("Authorization")
                 if auth_header is not None:
                     scheme, _, presented = auth_header.partition(" ")
-                    if scheme.lower() != "bearer" or not hmac.compare_digest(presented.strip(), api_token):
+                    presented = presented.strip()
+                    is_bearer = scheme.lower() == "bearer" and bool(presented)
+                    owner_ok = is_bearer and secret_equals(presented, auth.owner_token)
+                    client_ok = is_bearer and auth.client_token is not None and secret_equals(
+                        presented, auth.client_token)
+                    if owner_ok:
+                        wakeword = request.headers.get("X-Ultron-Client") == "wakeword"
+                        g.ctx = CommandContext(
+                            principal="api-token", channel=Channel.WAKEWORD if wakeword else Channel.API,
+                            authenticated=True, input_mode=InputMode.VOICE if wakeword else InputMode.TEXT,
+                        )
+                    elif client_ok:
+                        # The limited client token is the voice-device credential: always voice-trust rules.
+                        g.ctx = CommandContext(principal="client-token", channel=Channel.WAKEWORD,
+                                               authenticated=True, input_mode=InputMode.VOICE)
+                    else:
                         return _error(401, "unauthorized", "Invalid credentials.")
-                    channel = Channel.WAKEWORD if request.headers.get("X-Ultron-Client") == "wakeword" else Channel.API
-                    g.ctx = CommandContext(principal="api-token", channel=channel, authenticated=True)
                 else:
-                    session_id = _session_id()
-                    if session_id is None:
+                    claims = _session(auth)
+                    if claims is None:
                         return _error(401, "unauthorized", "Please log in to the HUD first (open /login).")
                     if state_changing:
                         if _request_origin() not in allowed_origins:
                             return _error(403, "forbidden_origin", "Missing or disallowed request origin.")
-                        if not signer.check_csrf(session_id, request.headers.get("X-CSRF-Token")):
+                        if not auth.signer.check_csrf(claims.session_id, request.headers.get("X-CSRF-Token")):
                             return _error(403, "csrf_failed", "Missing or invalid CSRF token. Reload the HUD.")
-                    g.ctx = CommandContext(principal=f"session:{session_id}", channel=Channel.HUD, authenticated=True)
+                    g.session = claims
+                    g.ctx = CommandContext(principal=f"session:{session_label(claims.session_id)}",
+                                           channel=Channel.HUD, authenticated=True)
 
                 if state_changing and request.mimetype != "application/json":
                     return _error(415, "unsupported_media_type", "Requests must use Content-Type: application/json.")
@@ -174,18 +258,22 @@ def create_app(
     # ------------------------------------------------------------------ public
     @app.get("/healthz")
     def healthz():
-        return jsonify({"ok": True, "auth_configured": signer is not None})
+        auth, _ = _try_auth()
+        return jsonify({"ok": True, "auth_configured": auth is not None})
 
     @app.get("/login")
     def login_page():
-        if _session_id() is not None:
+        auth, problem = _try_auth()
+        if auth is not None and _session(auth) is not None:
             return redirect("/")
-        return render_template("login.html", configured=signer is not None, setup_message=setup_message)
+        return render_template("login.html", configured=auth is not None, setup_message=problem)
 
     @app.post("/login")
     def login():
-        if signer is None:
-            return _error(503, "auth_not_configured", setup_message)
+        try:
+            auth = _auth()
+        except _AuthUnavailable as exc:
+            return _error(503, exc.code, exc.message)
         if _request_origin() not in allowed_origins:
             return _error(403, "forbidden_origin", "Missing or disallowed request origin.")
         if request.mimetype != "application/json":
@@ -196,42 +284,59 @@ def create_app(
         token = body.get("token")
         ticket = body.get("ticket")
         ok = False
-        if isinstance(token, str) and token:
-            ok = hmac.compare_digest(token.strip(), api_token)
-        elif isinstance(ticket, str) and ticket:
-            nonce = signer.verify_login_ticket(ticket)
-            ok = nonce is not None and used_tickets.consume(nonce)
+        try:
+            if isinstance(token, str) and token:
+                # Only the owner token can open a HUD session; the client token never can.
+                ok = secret_equals(token.strip(), auth.owner_token)
+            elif isinstance(ticket, str) and ticket:
+                checked = auth.signer.verify_login_ticket(ticket, LOGIN_TICKET_MAX_AGE, auth.state.generation)
+                ok = checked is not None and store.consume_ticket(checked[0], checked[1])
+        except SessionStateError as exc:
+            log.error("session state unavailable during login: %s", exc.problem)
+            return _error(503, "session_state_unavailable", exc.user_message)
         if not ok:
             throttle.record_failure()
             log.warning("HUD login failed")
             return _error(401, "invalid_credentials", "That token or login link is not valid (links expire quickly).")
         throttle.reset()
-        cookie_value, _session = signer.issue()
+        cookie_value, session_id = auth.signer.issue(auth.state.generation)
         resp = make_response(jsonify({"ok": True}))
         resp.set_cookie(
             SessionSigner.COOKIE_NAME, cookie_value, max_age=settings.session_ttl_seconds,
             httponly=True, samesite="Strict", path="/",
         )
-        log.info("HUD login succeeded")
+        log.info("HUD login succeeded (session %s)", session_label(session_id))
         return resp
 
     # ------------------------------------------------------------------ HUD
     @app.get("/")
     def index():
-        session_id = _session_id()
-        if session_id is None:
+        auth, _ = _try_auth()
+        claims = _session(auth) if auth is not None else None
+        if auth is None or claims is None:
             return redirect("/login")
-        return render_template("index.html", csrf_token=signer.csrf_token(session_id))
+        return render_template("index.html", csrf_token=auth.signer.csrf_token(claims.session_id))
 
     @app.post("/logout")
     @protected(state_changing=True)
     def logout():
         ctx: CommandContext = g.ctx
         backend.registry.cancel(ctx)  # a pending action never outlives the session that asked for it
-        if ctx.channel is Channel.HUD:
-            revoked_sessions.consume(ctx.principal.removeprefix("session:"))
         resp = make_response(jsonify({"ok": True}))
         resp.delete_cookie(SessionSigner.COOKIE_NAME, path="/", samesite="Strict", httponly=True)
+        claims: SessionClaims | None = g.session
+        if claims is not None:
+            logged_out.add(claims.session_id)
+            try:
+                store.revoke_session(claims.session_id, claims.expires_at)  # persists across restarts
+            except SessionStateError as exc:
+                log.error("could not record logout: %s", exc.problem)
+                resp = _error(503, "session_state_unavailable",
+                              "The logout could not be recorded, so this session may still be valid. "
+                              + exc.user_message)
+                resp.delete_cookie(SessionSigner.COOKIE_NAME, path="/", samesite="Strict", httponly=True)
+                return resp
+            log.info("HUD logout (session %s)", session_label(claims.session_id))
         return resp
 
     # ------------------------------------------------------------------ API
@@ -249,6 +354,10 @@ def create_app(
         if len(message) > MAX_MESSAGE_CHARS:
             return _error(413, "too_long", f"Messages are limited to {MAX_MESSAGE_CHARS} characters.")
         ctx: CommandContext = g.ctx
+        if _json_body().get("input") == "voice":
+            # The HUD marks speech-recognised commands. This can only make a request *more*
+            # restricted (voice can never approve), so a client cannot gain anything by lying.
+            ctx.input_mode = InputMode.VOICE
         reply = backend.handle(message, ctx)
         payload: dict[str, Any] = {"reply": reply}
         pending = _pending_payload(ctx)
@@ -281,8 +390,16 @@ def create_app(
     @app.post("/cancel")
     @protected(state_changing=True)
     def cancel():
-        outcome = backend.registry.cancel(g.ctx)
+        action_id = _json_body().get("action_id")
+        outcome = backend.registry.cancel(g.ctx, action_id=action_id if isinstance(action_id, str) else None)
         return jsonify({"reply": outcome.message, "status": outcome.status})
+
+    @app.get("/pending")
+    @protected(state_changing=False)
+    def pending():
+        """Pending actions this caller may resolve; for the HUD this includes requests made by
+        voice or API clients, which can only be approved here (by exact action id)."""
+        return jsonify({"pending": backend.registry.pending_for_confirmer(g.ctx)})
 
     # ------------------------------------------------------------------ errors
     def _make_handler(status_code: int, code: str, message: str) -> Callable:
@@ -315,9 +432,10 @@ def run(argv: list[str] | None = None) -> int:
         return 2
 
     token_result = load_api_token(settings)
-    install_log_redaction(extra_secrets=(token_result.token,) if token_result.token else ())
+    client_result = load_client_token(settings)
+    install_log_redaction(extra_secrets=tuple(t for t in (token_result.token, client_result.token) if t))
     backend = JarvisLegacyBackend()
-    app = create_app(settings, backend=backend, token_result=token_result)
+    app = create_app(settings, backend=backend)  # token files are re-read when they change
 
     print(f"JARVIS HUD listening on {settings.local_base_url}/ (bind address {settings.host}, debug "
           f"{'ON' if settings.debug else 'off'})")

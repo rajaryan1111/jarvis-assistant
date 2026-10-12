@@ -7,6 +7,11 @@ A destructive request creates a :class:`PendingAction` bound to:
 - an expiry time (default 60 s) and a small number of attempts.
 
 A bare phrase such as "confirm shutdown" is therefore never enough on its own.
+
+Who may approve is decided by ``ToolRegistry.confirm`` (only a signed-in HUD session
+using typed/clicked input). A request made by voice or by a bearer-token client is
+*delegated*: it can only be approved from the HUD, by its exact ``action_id`` (shown as
+a CONFIRM button), never with a spoken code. Its code is never revealed.
 """
 
 from __future__ import annotations
@@ -38,6 +43,8 @@ class PendingAction:
     expires_at: float
     attempts: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    delegated: bool = False  # requested by voice/API: approvable only from the HUD, by action_id
+    requested_via: str = ""  # channel name, for display and audit
 
     def expires_in(self, now: float) -> int:
         return max(0, int(round(self.expires_at - now)))
@@ -49,6 +56,7 @@ class PendingAction:
             "tool": self.tool_name,
             "summary": self.summary,
             "expires_in": self.expires_in(now),
+            "requested_via": self.requested_via,
         }
 
 
@@ -79,6 +87,9 @@ class ConfirmationStore:
         principal: str,
         summary: str,
         ttl_seconds: int | None = None,
+        *,
+        delegated: bool = False,
+        requested_via: str = "",
     ) -> PendingAction:
         now = self._clock()
         action = PendingAction(
@@ -90,6 +101,8 @@ class ConfirmationStore:
             summary=summary,
             created_at=now,
             expires_at=now + (ttl_seconds or self.ttl_seconds),
+            delegated=delegated,
+            requested_via=requested_via,
         )
         with self._lock:
             self._purge(now)
@@ -127,13 +140,55 @@ class ConfirmationStore:
             del self._pending[principal]
             return action
 
-    def confirm_id(self, principal: str, action_id: str) -> PendingAction:
+    def confirm_id(self, principal: str, action_id: str, *, allow_delegated: bool = False) -> PendingAction:
+        """Take the pending action with exactly ``action_id``.
+
+        Own actions match by principal. With ``allow_delegated`` (HUD sessions only) a
+        *delegated* action requested by another principal (voice / API client) may also be
+        approved, but only by its exact id. Expired, consumed or replaced ids never match.
+        """
         with self._lock:
-            action = self._take(principal, None)
-            if not secrets.compare_digest(action_id.encode(), action.action_id.encode()):
+            now = self._clock()
+            own = self._pending.get(principal)
+            if own is not None and secrets.compare_digest(action_id.encode(), own.action_id.encode()):
+                if own.expires_at <= now:
+                    del self._pending[principal]
+                    raise ConfirmationError("expired", "That confirmation has expired. Please ask again.")
+                del self._pending[principal]
+                return own
+            if allow_delegated:
+                for owner, action in list(self._pending.items()):
+                    if owner == principal or not action.delegated:
+                        continue
+                    if secrets.compare_digest(action_id.encode(), action.action_id.encode()):
+                        del self._pending[owner]
+                        if action.expires_at <= now:
+                            raise ConfirmationError("expired", "That confirmation has expired. Please ask again.")
+                        return action
                 raise ConfirmationError("not_found", "That pending action no longer exists.")
-            del self._pending[principal]
-            return action
+            if own is None:
+                raise ConfirmationError("none_pending", "There is no pending action to confirm.")
+            if own.expires_at <= now:
+                del self._pending[principal]
+                raise ConfirmationError("expired", "That confirmation has expired. Please ask again.")
+            raise ConfirmationError("not_found", "That pending action no longer exists.")
+
+    def confirmable_by(self, principal: str, *, include_delegated: bool) -> list[PendingAction]:
+        """Pending actions ``principal`` could approve (own, plus delegated ones for the HUD)."""
+        with self._lock:
+            self._purge(self._clock())
+            return [
+                action for owner, action in self._pending.items()
+                if owner == principal or (include_delegated and action.delegated)
+            ]
+
+    def cancel_delegated(self, action_id: str) -> PendingAction | None:
+        with self._lock:
+            self._purge(self._clock())
+            for owner, action in list(self._pending.items()):
+                if action.delegated and secrets.compare_digest(action_id.encode(), action.action_id.encode()):
+                    return self._pending.pop(owner)
+            return None
 
     def clear(self) -> int:
         """Invalidate every pending action for every principal. Returns how many were dropped."""

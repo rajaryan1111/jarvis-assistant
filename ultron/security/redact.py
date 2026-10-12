@@ -15,7 +15,7 @@ from ultron.config import CREDENTIALS, is_placeholder
 
 REDACTED = "[REDACTED]"
 
-_SENSITIVE_PARAM = r"(?:api[_-]?key|apikey|appid|access[_-]?key|accesskey|token|secret|password|key)"
+_SENSITIVE_PARAM = r"(?:api[_-]?key|apikey|appid|access[_-]?key|accesskey|[a-z_-]*token|secret|password|key)"
 _QUERY_RE = re.compile(rf"(?i)([?&;]{_SENSITIVE_PARAM}=)[^&\s'\"<>]+")
 _HEADER_RE = re.compile(r"(?i)\b(authorization:\s*bearer\s+|x-api-key:\s*)[^\s'\",]+")
 _TOKEN_PATTERNS = (

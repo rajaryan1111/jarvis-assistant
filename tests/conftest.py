@@ -23,7 +23,8 @@ os.environ["ULTRON_KNOWLEDGE_INDEX"] = str(_SANDBOX / "knowledge_index.json")
 os.environ["ULTRON_FACE_DIR"] = str(_SANDBOX / "faces")
 os.environ["ULTRON_SCREENSHOT_DIR"] = str(_SANDBOX / "screenshots")
 for _name in (
-    "ULTRON_API_TOKEN", "ULTRON_API_TOKEN_FILE", "ULTRON_HOST", "ULTRON_PORT", "ULTRON_DEBUG",
+    "ULTRON_API_TOKEN", "ULTRON_API_TOKEN_FILE", "ULTRON_CLIENT_TOKEN", "ULTRON_CLIENT_TOKEN_FILE",
+    "ULTRON_VOICE_TRUST", "ULTRON_SESSION_HOURS", "ULTRON_HOST", "ULTRON_PORT", "ULTRON_DEBUG",
     "ULTRON_ALLOW_NON_LOOPBACK", "ULTRON_ALLOWED_HOSTS", "ULTRON_ALLOWED_ORIGINS",
     "OPENAI_API_KEY", "WEATHER_API_KEY", "NEWS_API_KEY", "CRICKET_API_KEY", "PICOVOICE_ACCESS_KEY",
 ):
@@ -56,6 +57,13 @@ class FakeOpener:
     def __call__(self, url):
         self.urls.append(url)
         return True
+
+
+def owner_hud(name: str = "owner"):
+    """A signed-in HUD session typing (or clicking): the only context that can approve."""
+    from ultron.security.policy import Channel, CommandContext
+
+    return CommandContext(f"session:{name}", Channel.HUD, authenticated=True)
 
 
 @pytest.fixture

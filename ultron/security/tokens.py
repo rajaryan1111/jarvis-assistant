@@ -5,6 +5,18 @@ It is stored outside the repository in a ``0600`` file (default:
 ``~/Library/Application Support/Ultron/api_token`` on macOS) or supplied via
 ``ULTRON_API_TOKEN``. It is never sent to the browser: the HUD exchanges it
 once for a signed session cookie (see :mod:`ultron.security.sessions`).
+
+Two credentials (see docs/M1_2_IDENTITY_SESSIONS_VOICE.md):
+
+* the **owner API token** (``api_token`` / ``ULTRON_API_TOKEN``): signs HUD sessions and
+  is the only token accepted at ``/login``;
+* an optional **client token** (``client_token`` / ``ULTRON_CLIENT_TOKEN``) for headless
+  clients such as the wake-word listener. It can send commands but can never log in to
+  the HUD or approve a pending action, so a leaked client token cannot confirm anything.
+
+Neither bearer token can approve high-impact actions; only a HUD session can.
+:class:`TokenSource` re-reads token files when they change, so ``token rotate`` takes
+effect in a running server without a restart.
 """
 
 from __future__ import annotations
@@ -13,6 +25,7 @@ import os
 import secrets
 import stat
 import sys
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +35,7 @@ from ultron.security.paths import atomic_write_text
 
 MIN_TOKEN_LENGTH = 32
 SETUP_HINT = "Run `python -m ultron token init` (or `uv run ultron token init`) to create one."
+CLIENT_SETUP_HINT = "Run `python -m ultron token init --client` to create one."
 
 
 @dataclass(frozen=True)
@@ -45,33 +59,97 @@ def _check_strength(token: str, where: str) -> str | None:
     return None
 
 
-def load_api_token(settings: Settings, env: Mapping[str, str] | None = None) -> TokenLoadResult:
-    env = os.environ if env is None else env
-    raw = env.get("ULTRON_API_TOKEN")
+def _load_secret(env: Mapping[str, str], env_name: str, path: Path, hint: str, *, required: bool) -> TokenLoadResult:
+    raw = env.get(env_name)
     if raw is not None and raw.strip():
         if is_placeholder(raw):
-            return TokenLoadResult(None, "env", f"ULTRON_API_TOKEN still contains a placeholder value. {SETUP_HINT}")
+            return TokenLoadResult(None, "env", f"{env_name} still contains a placeholder value. {hint}")
         token = raw.strip()
-        problem = _check_strength(token, "ULTRON_API_TOKEN")
+        problem = _check_strength(token, env_name)
         return TokenLoadResult(None if problem else token, "env", problem)
 
-    path = settings.api_token_file
     if not path.exists():
-        return TokenLoadResult(None, None, f"No API token is configured (expected {path}). {SETUP_HINT}")
+        if not required:
+            return TokenLoadResult(None, None, None)
+        return TokenLoadResult(None, None, f"No API token is configured (expected {path}). {hint}")
     if sys.platform != "win32":
         mode = path.stat().st_mode
         if mode & (stat.S_IRWXG | stat.S_IRWXO):
             return TokenLoadResult(
                 None,
                 "file",
-                f"The API token file {path} is readable by other users. Fix it with: chmod 600 '{path}'",
+                f"The token file {path} is readable by other users. Fix it with: chmod 600 '{path}'",
             )
     try:
         token = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
-        return TokenLoadResult(None, "file", f"Could not read the API token file {path} ({type(exc).__name__}).")
+        return TokenLoadResult(None, "file", f"Could not read the token file {path} ({type(exc).__name__}).")
     problem = _check_strength(token, str(path))
     return TokenLoadResult(None if problem else token, "file", problem)
+
+
+def load_api_token(settings: Settings, env: Mapping[str, str] | None = None) -> TokenLoadResult:
+    """The owner API token (required for the server)."""
+    env = os.environ if env is None else env
+    return _load_secret(env, "ULTRON_API_TOKEN", settings.api_token_file, SETUP_HINT, required=True)
+
+
+def load_client_token(settings: Settings, env: Mapping[str, str] | None = None) -> TokenLoadResult:
+    """The optional limited client token. Not configured -> ``TokenLoadResult(None, None, None)``."""
+    env = os.environ if env is None else env
+    return _load_secret(env, "ULTRON_CLIENT_TOKEN", settings.client_token_file, CLIENT_SETUP_HINT, required=False)
+
+
+class TokenSource:
+    """Current owner and client tokens, re-read whenever a token file changes on disk.
+
+    Environment variables are read once (they cannot change inside a running process).
+    Passing ``owner``/``client`` results pins them (used by tests and embedding code).
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        env: Mapping[str, str] | None = None,
+        *,
+        owner: TokenLoadResult | None = None,
+        client: TokenLoadResult | None = None,
+    ) -> None:
+        source = os.environ if env is None else env
+        self._env = {k: source[k] for k in ("ULTRON_API_TOKEN", "ULTRON_CLIENT_TOKEN") if k in source}
+        self._settings = settings
+        self._pinned_owner = owner
+        self._pinned_client = client
+        self._lock = threading.Lock()
+        self._cache: dict[str, tuple[object, TokenLoadResult]] = {}
+
+    @staticmethod
+    def _signature(path: Path) -> object:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_mode)
+
+    def _get(self, kind: str) -> TokenLoadResult:
+        if kind == "owner":
+            path, env_name, loader = self._settings.api_token_file, "ULTRON_API_TOKEN", load_api_token
+        else:
+            path, env_name, loader = self._settings.client_token_file, "ULTRON_CLIENT_TOKEN", load_client_token
+        signature = ("env",) if self._env.get(env_name, "").strip() else self._signature(path)
+        with self._lock:
+            cached = self._cache.get(kind)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+            result = loader(self._settings, env=self._env)
+            self._cache[kind] = (signature, result)
+            return result
+
+    def owner(self) -> TokenLoadResult:
+        return self._pinned_owner if self._pinned_owner is not None else self._get("owner")
+
+    def client(self) -> TokenLoadResult:
+        return self._pinned_client if self._pinned_client is not None else self._get("client")
 
 
 def write_token_file(path: Path, token: str | None = None, *, overwrite: bool = False) -> Path:

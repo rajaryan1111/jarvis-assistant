@@ -6,6 +6,7 @@ import re
 import threading
 
 import pytest
+from conftest import owner_hud
 
 from ultron.security.policy import Channel, CommandContext
 
@@ -28,15 +29,15 @@ def test_importing_main_starts_no_threads_and_runs_nothing():
 
 def test_standalone_confirm_shutdown_does_not_shut_down(legacy, fake_runner):
     """Regression: 'confirm shutdown' alone used to shut the Mac down."""
-    ctx = CommandContext.local_voice()
+    voice, hud = CommandContext.local_voice(), owner_hud()
     for phrase in ("confirm shutdown", "confirm restart", "yes confirm shutdown", "confirm shut down now"):
-        reply = legacy.handle_command(phrase, ctx)
-        assert "no pending action" in reply.lower()
+        assert "spoken confirmation" in legacy.handle_command(phrase, voice).lower()  # voice can never approve
+        assert "no pending action" in legacy.handle_command(phrase, hud).lower()
     assert fake_runner.calls == []
 
 
 def test_shutdown_needs_request_then_matching_code(legacy, fake_runner):
-    ctx = CommandContext.local_voice()
+    ctx = owner_hud()
     reply = legacy.handle_command("shutdown system", ctx)
     code = _code(reply)
     assert fake_runner.calls == []
@@ -50,8 +51,8 @@ def test_shutdown_needs_request_then_matching_code(legacy, fake_runner):
     assert len(fake_runner.calls) == 1
 
 
-def test_spoken_digit_words_are_accepted(legacy, fake_runner):
-    ctx = CommandContext.local_voice()
+def test_digit_words_are_accepted_in_typed_confirmations(legacy, fake_runner):
+    ctx = owner_hud()
     code = _code(legacy.handle_command("restart system", ctx))
     words = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
              "6": "six", "7": "seven", "8": "eight", "9": "nine"}
@@ -61,7 +62,7 @@ def test_spoken_digit_words_are_accepted(legacy, fake_runner):
 
 
 def test_confirming_a_different_action_is_rejected(legacy, fake_runner):
-    ctx = CommandContext.local_voice()
+    ctx = owner_hud()
     code = _code(legacy.handle_command("clear cache", ctx))
     reply = legacy.handle_command(f"confirm shutdown {code}", ctx)
     assert "not the one you tried to confirm" in reply
@@ -70,7 +71,7 @@ def test_confirming_a_different_action_is_rejected(legacy, fake_runner):
 
 def test_cache_cleanup_regression_requires_confirmation(legacy):
     """Regression: 'clear cache' used to rm -rf ~/Library/Caches/* immediately."""
-    ctx = CommandContext.local_voice()
+    ctx = owner_hud()
     caches = legacy.cache_dir_for_tests
     (caches / "app").mkdir()
     (caches / "app" / "data").write_text("x")
@@ -107,7 +108,7 @@ def test_cancel_only_intercepted_when_something_is_pending(legacy):
 
 
 def test_clear_reminders_requires_confirmation(legacy):
-    ctx = CommandContext.local_voice()
+    ctx = owner_hud()
     legacy.memory["reminders"] = [{"text": "a", "time": 0, "repeat": None}, {"text": "b", "time": 0, "repeat": None}]
     reply = legacy.handle_command("clear reminders", ctx)
     assert "delete all 2 reminders" in reply
@@ -118,7 +119,7 @@ def test_clear_reminders_requires_confirmation(legacy):
 
 def test_gate_blocks_confirmation_when_security_mode_cannot_verify(legacy, monkeypatch, fake_runner):
     monkeypatch.setattr(legacy, "security_check", lambda: (False, "Face verification failed."))
-    ctx = CommandContext.local_voice()
+    ctx = owner_hud()
     code = _code(legacy.handle_command("shutdown system", ctx))
     assert legacy.handle_command(f"confirm {code}", ctx) == "Face verification failed."
     assert fake_runner.calls == []

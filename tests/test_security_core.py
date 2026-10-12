@@ -155,9 +155,9 @@ def test_session_cookie_roundtrip_tamper_and_expiry():
     signer = SessionSigner(generate_token(), ttl_seconds=60, clock=clock)
     cookie, sid = signer.issue()
     assert signer.verify(cookie) == sid
-    sid_part, exp, sig = cookie.split(".")
-    assert signer.verify(f"{sid_part}.{int(exp) + 1000}.{sig}") is None  # extended expiry
-    assert signer.verify(f"other.{exp}.{sig}") is None
+    version, sid_part, gen, issued, exp, sig = cookie.split(".")
+    assert signer.verify(f"{version}.{sid_part}.{gen}.{issued}.{int(exp) + 1000}.{sig}") is None  # extended
+    assert signer.verify(f"{version}.other.{gen}.{issued}.{exp}.{sig}") is None
     assert signer.verify(None) is None and signer.verify("garbage") is None
     clock.t += 61
     assert signer.verify(cookie) is None
@@ -185,7 +185,7 @@ def test_login_ticket_expires_and_is_single_use():
     signer = SessionSigner(generate_token(), 60, clock=clock)
     used = UsedNonces(clock=clock)
     ticket = signer.issue_login_ticket()
-    nonce = signer.verify_login_ticket(ticket)
+    nonce, _expires = signer.verify_login_ticket(ticket)
     assert nonce and used.consume(nonce)
     assert not used.consume(nonce)
     clock.t += 121
@@ -308,7 +308,7 @@ def test_public_view_has_no_code():
     public = action.public(action.created_at)
     assert public["action_id"] == action.action_id
     assert action.code not in public.values()
-    assert set(public) == {"action_id", "tool", "summary", "expires_in"}
+    assert set(public) == {"action_id", "tool", "summary", "expires_in", "requested_via"}
 
 
 # ----------------------------------------------------------------- redaction

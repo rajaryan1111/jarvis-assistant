@@ -1,7 +1,8 @@
 """Tool registry: the single authorization boundary for sensitive operations.
 
 ``request`` -> policy decision -> run now | create pending confirmation | deny
-``confirm`` -> validate the pending action (principal, code/id, expiry, single use) -> gate -> run
+``confirm`` -> only a signed-in HUD session (typed/clicked) may approve -> validate the pending
+action (principal or delegated id, code/id, expiry, single use) -> gate -> run
 Every decision is written to the ``ultron.audit`` logger (no argument values).
 
 Every state-changing legacy action (voice, CLI, HUD, API and background services) is a
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ultron.security.confirmation import ConfirmationError, ConfirmationStore, PendingAction
-from ultron.security.policy import CommandContext, Decision, evaluate
+from ultron.security.policy import Channel, CommandContext, Decision, VoiceTrust, evaluate
 from ultron.security.redact import redact
 from ultron.tools.base import Tool, ToolResult
 
@@ -27,6 +28,17 @@ audit_log = logging.getLogger("ultron.audit")
 
 Status = Literal["completed", "failed", "pending_confirmation", "denied", "unavailable", "cancelled"]
 Gate = Callable[[PendingAction], tuple[bool, str]]
+
+# A request made by voice or an API client must be approved in the HUD: allow time to get there.
+DELEGATED_CONFIRMATION_TTL_SECONDS = 120
+CONFIRM_ONLY_IN_HUD = (
+    "Confirmations are only accepted from the signed-in HUD (typed or clicked), "
+    "not from voice, API clients or untrusted content."
+)
+CONFIRM_NOT_BY_VOICE = (
+    "For your safety I can't accept a spoken confirmation. "
+    "Press CONFIRM in the signed-in HUD, or say 'cancel'."
+)
 
 
 @dataclass
@@ -43,8 +55,10 @@ class ToolRegistry:
         confirmations: ConfirmationStore | None = None,
         platform: str = sys.platform,
         monotonic: Callable[[], float] = time.monotonic,
+        voice_trust: VoiceTrust = VoiceTrust.ROUTINE,
     ) -> None:
         self._tools: dict[str, Tool] = {}
+        self.voice_trust = voice_trust
         self.confirmations = confirmations or ConfirmationStore(clock=monotonic)
         self.platform = platform
         self._now = monotonic
@@ -68,11 +82,20 @@ class ToolRegistry:
     def has_pending(self, ctx: CommandContext) -> bool:
         return self.confirmations.pending_for(ctx.principal) is not None
 
+    def pending_for_confirmer(self, ctx: CommandContext) -> list[dict[str, Any]]:
+        """What the HUD may show with CONFIRM/CANCEL buttons: its own pending action plus actions
+        requested by voice or API clients (which can only be approved here). Never the codes."""
+        if not ctx.can_authorize:
+            return []
+        now = self._now()
+        actions = self.confirmations.confirmable_by(ctx.principal, include_delegated=ctx.can_confirm)
+        return [action.public(now) for action in actions]
+
     # --- execution ---------------------------------------------------------
     def _audit(self, event: str, tool: str, ctx: CommandContext, status: str) -> None:
         audit_log.info(
-            "event=%s tool=%s principal=%s channel=%s status=%s",
-            event, tool, ctx.principal, ctx.channel.value, status,
+            "event=%s tool=%s principal=%s channel=%s input=%s status=%s",
+            event, tool, ctx.principal, ctx.channel.value, ctx.input_mode.value, status,
         )
 
     def request(self, name: str, arguments: Mapping[str, Any], ctx: CommandContext) -> ToolOutcome:
@@ -83,7 +106,7 @@ class ToolRegistry:
             self._audit("request", name, ctx, "unavailable")
             return ToolOutcome("unavailable", "That action is only available on macOS.")
 
-        decision = evaluate(tool.spec.risk, ctx, internal_ok=tool.spec.internal_ok)
+        decision = evaluate(tool.spec.risk, ctx, internal_ok=tool.spec.internal_ok, voice_trust=self.voice_trust)
         if decision.decision is Decision.DENY:
             self._audit("request", name, ctx, "denied")
             return ToolOutcome("denied", f"I can't do that. {decision.reason}")
@@ -93,18 +116,27 @@ class ToolRegistry:
             except Exception as exc:  # noqa: BLE001 - preview problems must not crash the assistant
                 audit_log.warning("preview failed for %s: %s", name, redact(exc))
                 return ToolOutcome("failed", "I couldn't prepare that action safely, so I did nothing.")
+            # A HUD session approves its own requests. Anything else (voice, API client) is
+            # *delegated*: approvable only from the HUD by action id, and its code is never shown.
+            delegated = ctx.channel is not Channel.HUD
+            ttl_seconds = tool.spec.confirmation_ttl_seconds
+            if delegated:
+                ttl_seconds = max(ttl_seconds or 0, DELEGATED_CONFIRMATION_TTL_SECONDS)
             pending = self.confirmations.create(
-                name, arguments, ctx.principal, preview, ttl_seconds=tool.spec.confirmation_ttl_seconds
+                name, arguments, ctx.principal, preview, ttl_seconds=ttl_seconds,
+                delegated=delegated, requested_via=ctx.channel.value,
             )
             ctx.events.append(("pending_action", pending))
             self._audit("request", name, ctx, "pending_confirmation")
             ttl = pending.expires_in(self._now())
-            return ToolOutcome(
-                "pending_confirmation",
-                f"{preview} To proceed, say or type 'confirm {pending.code}' within {ttl} seconds, "
-                "or say 'cancel'.",
-                pending=pending,
-            )
+            if ctx.can_confirm:
+                message = (f"{preview} To proceed, type 'confirm {pending.code}' or press CONFIRM within "
+                           f"{ttl} seconds, or say 'cancel'.")
+            else:
+                # Voice or API client: no code (it would be spoken aloud and prove nothing).
+                message = (f"{preview} I can't accept a spoken or API confirmation for this. Press CONFIRM "
+                           f"in the signed-in HUD within {ttl} seconds, or say 'cancel'.")
+            return ToolOutcome("pending_confirmation", message, pending=pending)
         return self._execute(tool, arguments, ctx)
 
     def confirm(
@@ -116,9 +148,14 @@ class ToolRegistry:
         expected_tool: str | None = None,
         gate: Gate | None = None,
     ) -> ToolOutcome:
-        if not ctx.can_authorize:
-            self._audit("confirm", "-", ctx, "denied_untrusted")
-            return ToolOutcome("denied", "Confirmations are only accepted from an authenticated user.")
+        if not ctx.can_confirm:
+            # Voice, bearer-token clients, background services and untrusted content can never
+            # approve: not with a code, not with an action id. Nothing else is tried instead.
+            if ctx.can_authorize and ctx.is_voice:
+                self._audit("confirm", "-", ctx, "denied_voice")
+                return ToolOutcome("denied", CONFIRM_NOT_BY_VOICE)
+            self._audit("confirm", "-", ctx, "denied_channel" if ctx.can_authorize else "denied_untrusted")
+            return ToolOutcome("denied", CONFIRM_ONLY_IN_HUD)
         if code is None and action_id is None:
             if self.has_pending(ctx):
                 return ToolOutcome(
@@ -128,7 +165,7 @@ class ToolRegistry:
             return ToolOutcome("denied", "There is no pending action to confirm.")
         try:
             if action_id is not None:
-                pending = self.confirmations.confirm_id(ctx.principal, action_id)
+                pending = self.confirmations.confirm_id(ctx.principal, action_id, allow_delegated=True)
             else:
                 pending = self.confirmations.confirm_code(ctx.principal, code or "", expected_tool)
         except ConfirmationError as err:
@@ -143,7 +180,7 @@ class ToolRegistry:
             if not ok:
                 self._audit("confirm", pending.tool_name, ctx, "gate_denied")
                 return ToolOutcome("denied", message or "The additional security check failed.")
-        self._audit("confirm", pending.tool_name, ctx, "accepted")
+        self._audit("confirm", pending.tool_name, ctx, "accepted_delegated" if pending.delegated else "accepted")
         return self._execute(tool, pending.arguments, ctx)
 
     def confirm_hint_map(self) -> tuple[tuple[str, str], ...]:
@@ -158,8 +195,18 @@ class ToolRegistry:
             audit_log.info("event=invalidate_all count=%d reason=%s", dropped, reason)
         return dropped
 
-    def cancel(self, ctx: CommandContext) -> ToolOutcome:
-        pending = self.confirmations.cancel(ctx.principal)
+    def cancel(self, ctx: CommandContext, action_id: str | None = None) -> ToolOutcome:
+        """Cancel the caller's own pending action. Cancelling is always safe, so voice may do it.
+        A HUD session may also cancel a delegated (voice/API) request by its exact id."""
+        pending = None
+        if action_id and ctx.can_confirm:
+            own = self.confirmations.pending_for(ctx.principal)
+            if own is not None and own.action_id == action_id:
+                pending = self.confirmations.cancel(ctx.principal)
+            else:
+                pending = self.confirmations.cancel_delegated(action_id)
+        elif ctx.can_authorize:
+            pending = self.confirmations.cancel(ctx.principal)
         if pending is None:
             return ToolOutcome("cancelled", "There was nothing pending to cancel.")
         self._audit("cancel", pending.tool_name, ctx, "cancelled")

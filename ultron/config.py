@@ -139,6 +139,12 @@ class Settings:
     api_token_file: Path = Path()
     session_ttl_seconds: int = int(DEFAULT_SESSION_HOURS * 3600)
     data_dir: Path = Path()
+    client_token_file: Path = Path()
+
+    @property
+    def session_state_file(self) -> Path:
+        """Persistent session revocation state (see ultron.security.session_state)."""
+        return self.data_dir / "session_state.json"
 
     @property
     def allowed_hosts(self) -> frozenset[str]:
@@ -196,6 +202,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     data_dir = default_data_dir(env)
     token_override = env.get("ULTRON_API_TOKEN_FILE")
     token_file = Path(token_override).expanduser() if token_override else data_dir / "api_token"
+    client_override = env.get("ULTRON_CLIENT_TOKEN_FILE")
+    client_file = Path(client_override).expanduser() if client_override else data_dir / "client_token"
 
     return Settings(
         host=env.get("ULTRON_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST,
@@ -207,4 +215,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         api_token_file=token_file,
         session_ttl_seconds=int(hours * 3600),
         data_dir=data_dir,
+        client_token_file=client_file,
     )

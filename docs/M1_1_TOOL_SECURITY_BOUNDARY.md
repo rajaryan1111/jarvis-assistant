@@ -161,6 +161,9 @@ Confirmation properties (unchanged from M1 except where marked):
   random 4-digit code and an unguessable id. It expires after 60 s and allows 3 wrong codes.
 - `confirm <code>` (voice/CLI) or the HUD button (`POST /confirm` with the action id) is accepted only from
   the **same principal**. Another HUD session, the bearer client, voice and untrusted text are all refused.
+  **Superseded in M1.2:** only a signed-in HUD session (typed or clicked) can approve. Voice and bearer
+  requests are approved in the HUD by exact action id, and spoken codes are no longer issued or accepted. See
+  [M1_2_IDENTITY_SESSIONS_VOICE.md](M1_2_IDENTITY_SESSIONS_VOICE.md#5-voice-trust-model).
 - A spoken hint must match the pending action: `confirm restart 1234` cannot confirm a pending cache cleanup.
 - A bare phrase (`confirm shutdown`, `confirm disable security mode`) never authorizes anything. With nothing
   pending, it does nothing. With something pending, it asks for the code.
@@ -321,7 +324,9 @@ Each count includes the then-missing doc-sync test. The code was restored after 
 
 ## Limitations
 
-**Authentication**
+**Authentication** (the first three items are **addressed in M1.2**; see
+[M1_2_IDENTITY_SESSIONS_VOICE.md](M1_2_IDENTITY_SESSIONS_VOICE.md): approval needs a HUD session, there is a
+limited client token, revocation persists across restarts, and voice can no longer approve)
 
 - **The API token is the real security boundary, and it is all-powerful.** Anyone who can read the token
   file (your OS account) or a live HUD cookie can do anything a user can, including confirming actions.
@@ -395,15 +400,14 @@ Run these on the owner's Mac. They are safe: nothing destructive is confirmed.
 5. "play lofi", then "search python dataclasses". The browser should open, and the reply should list titles.
 6. "temperature". The CPU temperature should be reported if `osx-cpu-temp` is installed in
    `/opt/homebrew/bin` or `/usr/local/bin`.
-7. With the `vision` extra installed:
-   1. While security mode is off, say "register my face". The reply should ask for a code; say
-      `confirm <code>`.
+7. With the `vision` extra installed (**updated for M1.2**: approvals happen in the HUD, not by voice):
+   1. While security mode is off, type "register my face" in the HUD and press CONFIRM.
    2. Say "enable security mode".
-   3. Say "disable security mode", then `confirm <code>`. The camera check should run, and the mode should
-      turn off only if your face matches.
+   3. Type "disable security mode" in the HUD and press CONFIRM. The camera check should run, and the mode
+      should turn off only if your face matches.
    4. Repeat with your face covered. It should be refused, and the mode should stay on.
-8. Without the `vision` extra, turn security mode on and then try "disable security mode". It should be
-   refused (fails closed). Then run `python -m ultron security disable` in Terminal, restart JARVIS and
+8. Without the `vision` extra, turn security mode on and then try "disable security mode" in the HUD. It
+   should be refused (fails closed). Then run `python -m ultron security disable` in Terminal, restart JARVIS and
    confirm the mode is off.
 9. In the HUD:
    1. Type "shutdown system". Wait 61 s, then click Confirm. It should say *expired*.
