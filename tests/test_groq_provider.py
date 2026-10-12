@@ -611,8 +611,33 @@ def test_output_parse_failed_retries_and_finishes_without_repeating_a_completed_
         ("demo.light", "completed"), (MALFORMED_OUTPUT, "invalid")
     ]
     assert len(stub.requests) == 3 and report.stop_reason == "finish_tool"
+    messages = stub.requests[2]["body"]["messages"]
+    assert messages[-1]["role"] == "user"
+    assert "Do not repeat any successful action" in messages[-1]["content"]
+    assert not any(m["role"] == "tool" and m.get("tool_call_id") == "c2" for m in messages)
     for text in (report.reply, caplog.text, repr(report)):
         assert "PRIVATE-NOTE-4410" not in text and "failed_generation" not in text and "BODY-OPF" not in text
+
+
+def test_tool_use_failed_after_completed_read_does_not_create_orphan_tool_message(legacy, stub):
+    seen = []
+    register(legacy, "demo.lookup", RiskTier.OBSERVE, lambda a: seen.append(a) or ToolResult(True, "Clock is 14:37"))
+    stub.script(
+        groq_completion(tool_calls=[("call_g1", model_name("demo.lookup"), "{}")]),
+        tool_use_failed(),
+        groq_completion(tool_calls=[finish_call("call_g3", "It is 14:37.", evidence="c1")]),
+    )
+    report = runtime(legacy, groq(stub), ["demo.lookup"]).run("what time is it?", owner_hud())
+    assert report.status == "completed" and report.verified is True and seen == [{}]
+    assert "14:37" in report.reply
+    assert [(s.tool, s.status) for s in report.steps] == [
+        ("demo.lookup", "completed"), (MALFORMED_CALL, "invalid")
+    ]
+    messages = stub.requests[2]["body"]["messages"]
+    assert messages[-1]["role"] == "user"
+    assert "include the requested factual result" in messages[-1]["content"]
+    assert not any(m["role"] == "tool" and m.get("tool_call_id") == "c2" for m in messages)
+    assert len(stub.requests) == 3
 
 
 def test_repeated_output_parse_failures_are_bounded_and_never_repeat_the_action(legacy, stub):
