@@ -400,8 +400,18 @@ class AgentRuntime:
                 if err.kind in ("malformed_call", "malformed_output"):
                     # The provider rejected this model turn before returning a usable call. Nothing
                     # from this failed turn ran. Count it as invalid and retry within both hard limits.
+                    # This was not a model-issued tool call: adding a role="tool" message here would
+                    # create an orphan tool result with no matching assistant tool_calls entry. Instead,
+                    # give the model a user-role recovery instruction while preserving prior tool results.
                     label = MALFORMED_CALL if err.kind == "malformed_call" else MALFORMED_OUTPUT
                     self._reject(run, label, "invalid", err.message)
+                    run.messages.append(Message(
+                        "user",
+                        "The provider could not process the previous model turn; no action from that turn "
+                        "was executed. Continue using the successful tool results already in this conversation. "
+                        "Do not repeat any successful action. When finishing, include the requested factual result "
+                        "from those results in your summary and cite the relevant call ids as evidence.",
+                    ))
                     continue
                 run.error = err.kind
                 run.error_code = err.code
