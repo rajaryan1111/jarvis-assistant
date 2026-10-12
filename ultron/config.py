@@ -217,3 +217,57 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         data_dir=data_dir,
         client_token_file=client_file,
     )
+
+
+# ----------------------------------------------------------------------------- agent loop (M2.0)
+DEFAULT_AGENT_MODEL = "gpt-4.1-mini"  # the model the legacy chat fallback already used
+_AGENT_MODEL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:/-")
+
+
+@dataclass(frozen=True)
+class AgentConfig:
+    """Agent-loop switches and hard limits (docs/M2_0_AGENT_LOOP.md). Values are clamped."""
+
+    enabled: bool = True
+    model: str = DEFAULT_AGENT_MODEL
+    max_steps: int = 6
+    max_tool_calls: int = 8
+    model_timeout: float = 20.0
+    tool_timeout: float = 20.0
+    max_duration: float = 45.0  # below the wake-word listener's 60 s read timeout
+    max_concurrent_runs: int = 4
+
+
+def load_agent_config(env: Mapping[str, str] | None = None) -> AgentConfig:
+    """Read ``ULTRON_AGENT*``. Bad values fall back to the default (never to "unlimited")."""
+    import logging
+
+    env = os.environ if env is None else env
+    log = logging.getLogger("ultron.config")
+    defaults = AgentConfig()
+
+    def number(name: str, default: float, low: float, high: float, cast: type = float) -> float:
+        raw = (env.get(name) or "").strip()
+        if not raw:
+            return default
+        try:
+            value = cast(raw)
+        except ValueError:
+            log.warning("%s must be a number; using %s", name, default)
+            return default
+        return cast(min(max(value, low), high))
+
+    model = (env.get("ULTRON_AGENT_MODEL") or "").strip() or DEFAULT_AGENT_MODEL
+    if len(model) > 100 or not set(model) <= _AGENT_MODEL_CHARS:
+        log.warning("ULTRON_AGENT_MODEL is not a valid model name; using %s", DEFAULT_AGENT_MODEL)
+        model = DEFAULT_AGENT_MODEL
+    return AgentConfig(
+        enabled=_flag(env, "ULTRON_AGENT", default=True),
+        model=model,
+        max_steps=int(number("ULTRON_AGENT_MAX_STEPS", defaults.max_steps, 1, 20, int)),
+        max_tool_calls=int(number("ULTRON_AGENT_MAX_TOOL_CALLS", defaults.max_tool_calls, 1, 30, int)),
+        model_timeout=number("ULTRON_AGENT_MODEL_TIMEOUT", defaults.model_timeout, 2, 120),
+        tool_timeout=number("ULTRON_AGENT_TOOL_TIMEOUT", defaults.tool_timeout, 1, 120),
+        max_duration=number("ULTRON_AGENT_MAX_SECONDS", defaults.max_duration, 5, 600),
+        max_concurrent_runs=int(number("ULTRON_AGENT_MAX_CONCURRENT", defaults.max_concurrent_runs, 1, 8, int)),
+    )

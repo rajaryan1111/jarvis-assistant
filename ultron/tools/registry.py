@@ -5,6 +5,11 @@
 action (principal or delegated id, code/id, expiry, single use) -> gate -> run
 Every decision is written to the ``ultron.audit`` logger (no argument values).
 
+The agent loop (``ultron.agent``) uses exactly this ``request`` path for every tool call it
+proposes. It may pass ``minimum_risk`` to *raise* (never lower) a tool's tier, e.g. after
+the run has read untrusted web content. Pending actions it creates are delegated: approvable
+only with the HUD CONFIRM button for that exact action id, never with a code.
+
 Every state-changing legacy action (voice, CLI, HUD, API and background services) is a
 registered tool and reaches its implementation only through ``request``/``confirm``;
 ``tests/test_policy_boundary.py`` checks this statically and behaviourally.
@@ -20,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ultron.security.confirmation import ConfirmationError, ConfirmationStore, PendingAction
-from ultron.security.policy import Channel, CommandContext, Decision, VoiceTrust, evaluate
+from ultron.security.policy import Channel, CommandContext, Decision, RiskTier, VoiceTrust, evaluate
 from ultron.security.redact import redact
 from ultron.tools.base import Tool, ToolResult
 
@@ -94,11 +99,30 @@ class ToolRegistry:
     # --- execution ---------------------------------------------------------
     def _audit(self, event: str, tool: str, ctx: CommandContext, status: str) -> None:
         audit_log.info(
-            "event=%s tool=%s principal=%s channel=%s input=%s status=%s",
-            event, tool, ctx.principal, ctx.channel.value, ctx.input_mode.value, status,
+            "event=%s tool=%s principal=%s channel=%s input=%s agent=%s status=%s",
+            event, tool, ctx.principal, ctx.channel.value, ctx.input_mode.value, ctx.agent_run or "-", status,
         )
 
-    def request(self, name: str, arguments: Mapping[str, Any], ctx: CommandContext) -> ToolOutcome:
+    def is_available(self, name: str) -> bool:
+        tool = self._tools.get(name)
+        return tool is not None and (tool.spec.platforms is None or self.platform in tool.spec.platforms)
+
+    def decision_for(self, name: str, ctx: CommandContext, minimum_risk: RiskTier | None = None) -> Decision | None:
+        """What ``request`` would decide for ``ctx`` (no side effects), or None if unavailable."""
+        tool = self._tools.get(name)
+        if tool is None or not self.is_available(name):
+            return None
+        risk = max(tool.spec.risk, minimum_risk) if minimum_risk is not None else tool.spec.risk
+        return evaluate(risk, ctx, internal_ok=tool.spec.internal_ok, voice_trust=self.voice_trust).decision
+
+    def request(
+        self,
+        name: str,
+        arguments: Mapping[str, Any],
+        ctx: CommandContext,
+        *,
+        minimum_risk: RiskTier | None = None,
+    ) -> ToolOutcome:
         tool = self._tools.get(name)
         if tool is None:
             return ToolOutcome("unavailable", "That action is not available.")
@@ -106,7 +130,9 @@ class ToolRegistry:
             self._audit("request", name, ctx, "unavailable")
             return ToolOutcome("unavailable", "That action is only available on macOS.")
 
-        decision = evaluate(tool.spec.risk, ctx, internal_ok=tool.spec.internal_ok, voice_trust=self.voice_trust)
+        # ``minimum_risk`` can only make a request stricter, never more permissive.
+        risk = max(tool.spec.risk, minimum_risk) if minimum_risk is not None else tool.spec.risk
+        decision = evaluate(risk, ctx, internal_ok=tool.spec.internal_ok, voice_trust=self.voice_trust)
         if decision.decision is Decision.DENY:
             self._audit("request", name, ctx, "denied")
             return ToolOutcome("denied", f"I can't do that. {decision.reason}")
@@ -116,9 +142,10 @@ class ToolRegistry:
             except Exception as exc:  # noqa: BLE001 - preview problems must not crash the assistant
                 audit_log.warning("preview failed for %s: %s", name, redact(exc))
                 return ToolOutcome("failed", "I couldn't prepare that action safely, so I did nothing.")
-            # A HUD session approves its own requests. Anything else (voice, API client) is
-            # *delegated*: approvable only from the HUD by action id, and its code is never shown.
-            delegated = ctx.channel is not Channel.HUD
+            # A HUD session approves its own requests. Anything else (voice, API client, or the
+            # agent loop acting for any caller) is *delegated*: approvable only from the HUD by
+            # action id, and its code is never shown.
+            delegated = ctx.channel is not Channel.HUD or ctx.agent_run is not None
             ttl_seconds = tool.spec.confirmation_ttl_seconds
             if delegated:
                 ttl_seconds = max(ttl_seconds or 0, DELEGATED_CONFIRMATION_TTL_SECONDS)
@@ -129,7 +156,11 @@ class ToolRegistry:
             ctx.events.append(("pending_action", pending))
             self._audit("request", name, ctx, "pending_confirmation")
             ttl = pending.expires_in(self._now())
-            if ctx.can_confirm:
+            if ctx.agent_run is not None:
+                # Proposed by the agent loop: the person must approve that exact action.
+                message = (f"{preview} The assistant proposed this, so it needs your approval: press CONFIRM in the "
+                           f"signed-in HUD within {ttl} seconds, or say 'cancel'.")
+            elif ctx.can_confirm:
                 message = (f"{preview} To proceed, type 'confirm {pending.code}' or press CONFIRM within "
                            f"{ttl} seconds, or say 'cancel'.")
             else:
@@ -157,6 +188,9 @@ class ToolRegistry:
             self._audit("confirm", "-", ctx, "denied_channel" if ctx.can_authorize else "denied_untrusted")
             return ToolOutcome("denied", CONFIRM_ONLY_IN_HUD)
         if code is None and action_id is None:
+            own = self.confirmations.pending_for(ctx.principal)
+            if own is not None and own.delegated:
+                return ToolOutcome("denied", f"Press CONFIRM in the HUD to approve: {own.summary}")
             if self.has_pending(ctx):
                 return ToolOutcome(
                     "denied",

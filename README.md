@@ -14,6 +14,8 @@ A macOS-focused personal AI assistant that combines **voice interaction, vision,
 
 - 🎙️ **Voice**: microphone loop (`python main.py`), an optional Porcupine wake word, and macOS `say` for speech.
 - 🧠 **LLM + RAG**: OpenAI-backed answers and study plans, plus an offline knowledge base over your notes/PDFs.
+- 🧩 **Multi-step requests**: a bounded agent loop picks tools step by step ("weather in Pune, then remind me
+  at 6 pm"), checks the real results and never approves anything itself ([details](docs/M2_0_AGENT_LOOP.md)).
 - 👁️ **Vision (optional)**: face registration/check, person detection and an open-palm gesture (MediaPipe Tasks).
 - 🖥️ **macOS automation**: open apps/sites, screenshots, brightness/volume, diagnostics, and restart/shutdown (with confirmation).
 - ⏰ **Routines**: reminders, a study planner, local memory, sleep mode and a virtual smart-home state.
@@ -118,6 +120,17 @@ signed-in HUD** with the CONFIRM button. No code is spoken, and "confirm" by voi
 (or a recording of one) is not proof of who is speaking. `ULTRON_VOICE_TRUST=observe` limits voice to read-only
 answers. Details: [voice trust model](docs/M1_2_IDENTITY_SESSIONS_VOICE.md#5-voice-trust-model).
 
+### Multi-step requests (agent loop)
+
+With `OPENAI_API_KEY` set, a request the keyword router does not recognise goes to a small agent loop.
+Start a request with `agent:` to force it. From a terminal: `uv run ultron agent "what time is it and how is
+my battery?" --steps`. The model can only *propose* calls to an allowlisted set of read-only and routine
+tools. Each call goes through the same policy, approval and audit as everything else. A run stops at
+6 model turns, 8 tool calls or 45 seconds by default, and "cancel" stops it. Success is reported only when
+the recorded tool results support it. After reading web, news, weather or Wikipedia content, any action in
+that run needs your approval in the HUD. Settings (`ULTRON_AGENT_*`) and limitations:
+[docs/M2_0_AGENT_LOOP.md](docs/M2_0_AGENT_LOOP.md).
+
 ## Security model
 
 The assistant can control this computer, so the server is built to fail closed:
@@ -199,6 +212,8 @@ See the M1 report for what was verified where.
 | "Vision features are not installed" / hand model message | `uv sync --extra vision`, and set `ULTRON_HAND_LANDMARKER_MODEL` (see Install) |
 | `PyAudio` fails to build | `brew install portaudio`, then reinstall the `voice` extra |
 | Restart/shutdown confirmed but nothing happens | Grant your terminal Automation permission for System Events (System Settings → Privacy & Security → Automation) |
+| "The assistant proposed this, so it needs your approval" | The task read outside content, or the action needs approval: press CONFIRM in the HUD |
+| "I couldn't verify that this was done" | The model claimed success but the tool results don't show it. Check, then ask again |
 | A feature says its key is missing | Add it to `.env`. Run `uv run ultron doctor` to see which keys are set |
 
 ## Repository structure
@@ -211,8 +226,9 @@ ultron/
   api/app.py          Flask app: auth, origin/host/CSRF guards, routes
   security/           tokens, sessions, risk policy, confirmations, redaction, secret scanner
   tools/              tool interface with risk metadata, registry, macOS system tools
+  agent/              bounded agent loop: schema checks, tool catalog, OpenAI adapter, runtime
   legacy.py           adapter between the API and main.py
-  cli.py              `ultron` command (serve, token, open-hud, doctor, check-secrets)
+  cli.py              `ultron` command (serve, token, open-hud, doctor, check-secrets, agent)
 templates/, static/   HUD + login page
 vision.py             optional OpenCV/MediaPipe utilities
 knowledge.py          optional offline knowledge base
@@ -220,7 +236,7 @@ news.py               NewsAPI integration
 wakeword_listener.py  optional Porcupine wake word
 jarvis_logic.py       thin wrapper around main.handle_command
 tests/                pytest suite
-docs/                 architecture audit, M1 report, credential rotation guide
+docs/                 architecture audit, M1/M1.1/M1.2/M2.0 reports, credential rotation guide
 ```
 
 ## Limitations

@@ -20,6 +20,8 @@ Commands
   security status  show whether face-check security mode is on
   security disable owner recovery: turn security mode off from this Mac's shell
                    (asks you to type DISABLE unless --yes is given)
+  agent "<objective>"  run the bounded agent loop once as the local shell user: read-only and
+                   routine tools only (anything that needs approval is refused here; use the HUD)
 """
 
 from __future__ import annotations
@@ -332,6 +334,38 @@ def _cmd_security(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_agent(args: argparse.Namespace) -> int:
+    """One agent run as the OS user at this shell (``Channel.CLI``: no approver attached)."""
+    import importlib
+
+    from ultron.security.policy import CommandContext
+
+    objective = " ".join(args.objective).strip()
+    if not objective:
+        print("Tell me what to do, e.g.: python -m ultron agent \"what time is it and how is my battery?\"",
+              file=sys.stderr)
+        return 2
+    legacy = importlib.import_module("main")
+    if not legacy.agent_available():
+        print("The agent loop is unavailable: set OPENAI_API_KEY in your .env (and do not set ULTRON_AGENT=0).",
+              file=sys.stderr)
+        return 2
+    ctx = CommandContext.local_cli()
+    try:
+        reply = legacy.run_agent(objective, ctx)
+    except KeyboardInterrupt:
+        legacy.AGENT_RUNS.cancel(ctx.principal)
+        print("\nStopped. A tool that was already running may still finish.", file=sys.stderr)
+        return 130
+    report = next((value for kind, value in reversed(ctx.events) if kind == "agent_report"), None)
+    print(reply)
+    if report is not None and args.steps:
+        for step in report.steps:
+            print(f"  {step.call_id} {step.tool}: {step.status} - {step.message}")
+        print(f"  status={report.status} verified={report.verified}")
+    return 0 if report is not None and report.status in ("answered", "completed") else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ultron", description="ULTRON/JARVIS local assistant utilities")
     parser.add_argument("--version", action="version", version=__version__)
@@ -355,6 +389,10 @@ def build_parser() -> argparse.ArgumentParser:
     sec.add_argument("action", choices=["status", "disable"])
     sec.add_argument("--yes", action="store_true", help="do not ask for typed confirmation")
     sec.set_defaults(func=_cmd_security)
+    agent = sub.add_parser("agent", help="run the bounded agent loop once (read-only and routine tools)")
+    agent.add_argument("objective", nargs="+", help="what you want done, in plain words")
+    agent.add_argument("--steps", action="store_true", help="also print each tool call and the final status")
+    agent.set_defaults(func=_cmd_agent)
     return parser
 
 

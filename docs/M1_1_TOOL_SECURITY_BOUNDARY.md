@@ -94,6 +94,14 @@ enabled), or *user / internal* (also the listed background service).
 
 | Tool | Tier | Entry points (phrases / routes) | Required permission | Confirmation | Effect and safeguards | Tests |
 |---|---|---|---|---|---|---|
+| `time.now` | OBSERVE | agent loop (M2.0) | any | no | local clock only | G |
+| `system.status` | OBSERVE | agent loop (M2.0) | any | no | psutil CPU/RAM/battery readings | G |
+| `reminders.list` | OBSERVE | agent loop (M2.0; the router keeps its own "what are my reminders") | any | no | reads `memory.json` | G |
+| `memory.list_notes` | OBSERVE | agent loop (M2.0) | any | no | reads `memory.json` | G |
+| `web.search` | OBSERVE | agent loop (M2.0) | any | no | DuckDuckGo HTML titles, 5 s timeout, never opens a browser; **external content** (taints the agent run) | G |
+| `wiki.summary` | OBSERVE | agent loop (M2.0) | any | no | Wikipedia summary; **external content** | G |
+| `weather.current` | OBSERVE | agent loop (M2.0) | any | no | OpenWeather, 5 s timeout, city pattern; **external content** | G |
+| `news.headlines` | OBSERVE | agent loop (M2.0) | any | no | NewsAPI (key in a header); **external content** | G |
 | `system.cpu_temperature` | OBSERVE | "temperature", "status report" | any | no | runs `osx-cpu-temp` from fixed Homebrew paths only (no `PATH`), 5 s timeout | B, P |
 | `audio.speak` | ROUTINE | every CLI reply, `POST /speak`, reminder and intruder alerts | user / internal (reminder + intruder watchers) | no | `/usr/bin/say`, leading-`-` guard, 4000-char cap, timeout | B, P |
 | `apps.open` | ROUTINE | "open <app>" | user | no | `/usr/bin/open -a <name>`; name must match a strict pattern (no `/`, no leading `-`, ≤ 64 chars) | B, P |
@@ -122,7 +130,8 @@ enabled), or *user / internal* (also the listed background service).
 | `system.shutdown` | DESTRUCTIVE | "shutdown system" | user + confirm | **yes** | fixed AppleScript, timeout | T, L, A, B |
 
 Tests: **B** `tests/test_policy_boundary.py`, **P** `tests/test_process_and_paths.py`, **T** `tests/test_tools.py`,
-**L** `tests/test_legacy_commands.py`, **A** `tests/test_api_security.py`. Every ROUTINE+ tool is also covered
+**L** `tests/test_legacy_commands.py`, **A** `tests/test_api_security.py`, **G** `tests/test_agent_loop.py` (M2.0; the
+agent loop and the tools it may use are described in `docs/M2_0_AGENT_LOOP.md`). Every ROUTINE+ tool is also covered
 by the direct-call bypass matrix (B) and, where it has a phrase, by the untrusted-command matrix (B).
 
 ### Entry points that are not tools

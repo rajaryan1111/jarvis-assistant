@@ -255,6 +255,12 @@ def create_app(
                 return backend.registry.describe_pending(value)
         return None
 
+    def _agent_payload(ctx: CommandContext) -> dict[str, Any] | None:
+        for kind, value in reversed(ctx.events):
+            if kind == "agent_report":
+                return value.public()
+        return None
+
     # ------------------------------------------------------------------ public
     @app.get("/healthz")
     def healthz():
@@ -348,21 +354,32 @@ def create_app(
     @app.post("/ask")
     @protected(state_changing=True)
     def ask():
-        message = _json_body().get("message", "")
+        body = _json_body()
+        message = body.get("message", "")
         if not isinstance(message, str) or not message.strip():
             return _error(400, "invalid_request", "Field 'message' must be a non-empty string.")
         if len(message) > MAX_MESSAGE_CHARS:
             return _error(413, "too_long", f"Messages are limited to {MAX_MESSAGE_CHARS} characters.")
+        mode = body.get("mode", "auto")
+        if mode not in ("auto", "agent"):
+            return _error(400, "invalid_request", "Field 'mode' must be 'auto' or 'agent'.")
         ctx: CommandContext = g.ctx
-        if _json_body().get("input") == "voice":
+        if body.get("input") == "voice":
             # The HUD marks speech-recognised commands. This can only make a request *more*
             # restricted (voice can never approve), so a client cannot gain anything by lying.
             ctx.input_mode = InputMode.VOICE
-        reply = backend.handle(message, ctx)
+        run_agent = getattr(backend, "run_agent", None)
+        if mode == "agent" and run_agent is None:
+            return _error(501, "agent_unavailable", "The agent loop is not available in this server.")
+        # Agent mode uses exactly the caller's context: same policy, approvals and audit.
+        reply = run_agent(message, ctx) if mode == "agent" else backend.handle(message, ctx)
         payload: dict[str, Any] = {"reply": reply}
         pending = _pending_payload(ctx)
         if pending:
             payload["pending_action"] = pending
+        agent = _agent_payload(ctx)
+        if agent:
+            payload["agent"] = agent
         return jsonify(payload)
 
     @app.post("/speak")
@@ -391,8 +408,18 @@ def create_app(
     @protected(state_changing=True)
     def cancel():
         action_id = _json_body().get("action_id")
-        outcome = backend.registry.cancel(g.ctx, action_id=action_id if isinstance(action_id, str) else None)
-        return jsonify({"reply": outcome.message, "status": outcome.status})
+        action_id = action_id if isinstance(action_id, str) and action_id else None
+        had_pending = action_id is not None or backend.registry.has_pending(g.ctx)
+        outcome = backend.registry.cancel(g.ctx, action_id=action_id)
+        # Without a specific action id, also stop this caller's running agent task(s), if any.
+        cancel_agent = getattr(backend, "cancel_agent", None)
+        stopped = cancel_agent(g.ctx) if cancel_agent is not None and action_id is None else 0
+        reply = outcome.message
+        if stopped and had_pending:
+            reply += " I also stopped the current task."
+        elif stopped:
+            reply = "Okay, I'm stopping the current task."
+        return jsonify({"reply": reply, "status": outcome.status, "stopped_tasks": stopped})
 
     @app.get("/pending")
     @protected(state_changing=False)

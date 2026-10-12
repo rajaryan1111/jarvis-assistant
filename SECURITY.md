@@ -19,6 +19,10 @@ Do not commit API keys, private screenshots, face images, personal recordings, o
   [docs/M1_1_TOOL_SECURITY_BOUNDARY.md](docs/M1_1_TOOL_SECURITY_BOUNDARY.md).
 - Authentication vs authorization, session lifecycle and persistent revocation, token rotation, the voice
   trust model, owner recovery and remaining risks: [docs/M1_2_IDENTITY_SESSIONS_VOICE.md](docs/M1_2_IDENTITY_SESSIONS_VOICE.md).
+- Agent loop (multi-step requests): the model only proposes calls to allowlisted tools; every call
+  passes the same policy/approval/audit, the model can never approve or see confirmation codes, and
+  web/news content cannot trigger actions without HUD approval:
+  [docs/M2_0_AGENT_LOOP.md](docs/M2_0_AGENT_LOOP.md).
 - Voice is not identity: spoken requests can never approve a high-impact action; only a signed-in HUD
   session can. The local tokens do not protect against someone who controls your OS account.
 - Before committing, run `uv run python -m ultron check-secrets` (CI runs it too).

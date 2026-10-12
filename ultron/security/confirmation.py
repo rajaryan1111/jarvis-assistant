@@ -131,6 +131,9 @@ class ConfirmationStore:
     def confirm_code(self, principal: str, code: str, expected_tool: str | None = None) -> PendingAction:
         with self._lock:
             action = self._take(principal, expected_tool)
+            if action.delegated:
+                # Its code was never shown to anyone: only the CONFIRM button (exact id) works.
+                raise ConfirmationError("button_only", "Approve this request with the CONFIRM button in the HUD.")
             if not secrets.compare_digest(code.encode(), action.code.encode()):
                 action.attempts += 1
                 if action.attempts >= self.max_attempts:

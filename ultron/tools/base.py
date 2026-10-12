@@ -30,6 +30,12 @@ class ToolSpec:
     internal_ok: bool = False
     # Words that identify this tool in a spoken confirmation ("confirm restart 1234").
     confirm_hints: tuple[str, ...] = ()
+    # JSON-Schema subset (ultron.agent.schema) for the arguments. Only tools that declare one
+    # can ever be offered to the agent loop; model-proposed arguments are validated against it.
+    parameters: Mapping[str, Any] | None = None
+    # The result carries text from outside (web pages, news, encyclopedia, weather APIs).
+    # It is untrusted data: after the agent has read it, later actions need HUD approval.
+    external_content: bool = False
 
 
 @dataclass

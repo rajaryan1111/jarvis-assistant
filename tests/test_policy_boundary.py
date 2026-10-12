@@ -59,6 +59,15 @@ EXPECTED_TOOLS: dict[str, tuple[RiskTier, bool]] = {
     "vision.recognize_owner": (R.ROUTINE, True),
     "vision.detect_person": (R.ROUTINE, True),
     "vision.hand_gesture": (R.ROUTINE, False),
+    # M2.0: read-only tools (no side effects) that the agent loop may also use.
+    "time.now": (R.OBSERVE, False),
+    "system.status": (R.OBSERVE, False),
+    "reminders.list": (R.OBSERVE, False),
+    "memory.list_notes": (R.OBSERVE, False),
+    "web.search": (R.OBSERVE, False),
+    "wiki.summary": (R.OBSERVE, False),
+    "weather.current": (R.OBSERVE, False),
+    "news.headlines": (R.OBSERVE, False),
 }
 
 
@@ -180,10 +189,14 @@ def test_tool_implementations_are_only_reachable_through_the_registry():
 
 @pytest.mark.parametrize("relative", [
     "server.py", "wakeword_listener.py", "jarvis_logic.py", "ultron/api/app.py", "ultron/legacy.py",
+    "ultron/agent/runtime.py", "ultron/agent/catalog.py", "ultron/agent/provider.py", "ultron/agent/schema.py",
 ])
 def test_entry_points_only_use_the_public_boundary(relative):
     source = (PROJECT_ROOT / relative).read_text(encoding="utf-8")
-    for forbidden in ("_tool_", "save_memory", "subprocess", "os.system", "vision.", "webbrowser"):
+    # ``\b_tool_`` = an identifier *starting* with _tool_ (main.py's raw implementations), so that
+    # names such as ``max_tool_calls`` are not mistaken for one.
+    assert not re.search(r"\b_tool_", source), f"{relative} references a raw _tool_ implementation"
+    for forbidden in ("save_memory", "subprocess", "os.system", "vision.", "webbrowser"):
         assert forbidden not in source, f"{relative} references {forbidden}"
 
 

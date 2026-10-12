@@ -41,6 +41,31 @@ _APP_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .&+'()_-]{0,63}$")
 _VOICE_RE = re.compile(r"^[A-Za-z][A-Za-z ()-]{0,40}$")
 MAX_URL_CHARS = 2048
 
+# Argument schemas (ultron.agent.schema subset) for the tools the agent loop may propose.
+# They mirror each tool's own validation, which still runs.
+APP_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["app"],
+    "properties": {"app": {"type": "string", "minLength": 1, "maxLength": 64,
+                           "pattern": _APP_NAME_RE.pattern.strip("^$"),
+                           "description": "Application name as macOS knows it, e.g. 'Safari', 'Google Chrome'."}},
+}
+URL_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["url"],
+    "properties": {"url": {"type": "string", "minLength": 8, "maxLength": MAX_URL_CHARS, "pattern": r"https?://\S+",
+                           "description": "A complete http(s) web address."}},
+}
+VOLUME_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["level"],
+    "properties": {"level": {"type": "integer", "minimum": 0, "maximum": 100,
+                             "description": "Output volume in percent."}},
+}
+BRIGHTNESS_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["direction"],
+    "properties": {"direction": {"type": "string", "enum": ["up", "down"], "maxLength": 4},
+                   "steps": {"type": "integer", "minimum": 1, "maximum": 16,
+                             "description": "How many brightness steps (default 4)."}},
+}
+
 
 def _fail(message: str, reason: str) -> ToolResult:
     return ToolResult(False, message, {"reason": reason})
@@ -85,6 +110,7 @@ class OpenAppTool:
         risk=RiskTier.ROUTINE,
         side_effects=frozenset({"launch_app"}),
         platforms=MACOS,
+        parameters=APP_SCHEMA,
     )
 
     def __init__(self, runner: Runner = subprocess.run, timeout: float = 15.0) -> None:
@@ -123,6 +149,7 @@ class OpenUrlTool:
         description="Open an http(s) URL in the default browser.",
         risk=RiskTier.ROUTINE,
         side_effects=frozenset({"browser"}),
+        parameters=URL_SCHEMA,
     )
 
     def __init__(self, opener: Callable[[str], Any] | None = None) -> None:
@@ -149,6 +176,7 @@ class VolumeTool:
         risk=RiskTier.ROUTINE,
         side_effects=frozenset({"system_setting"}),
         platforms=MACOS,
+        parameters=VOLUME_SCHEMA,
     )
 
     def __init__(self, runner: Runner = subprocess.run, timeout: float = 10.0) -> None:
@@ -176,6 +204,7 @@ class BrightnessTool:
         risk=RiskTier.ROUTINE,
         side_effects=frozenset({"system_setting"}),
         platforms=MACOS,
+        parameters=BRIGHTNESS_SCHEMA,
     )
 
     def __init__(self, runner: Runner = subprocess.run, timeout: float = 10.0) -> None:
@@ -238,6 +267,7 @@ class CpuTemperatureTool:
         description="Read the CPU temperature with osx-cpu-temp (Homebrew).",
         risk=RiskTier.OBSERVE,
         platforms=MACOS,
+        parameters={"type": "object", "additionalProperties": False, "properties": {}},
     )
 
     def __init__(self, runner: Runner = subprocess.run, candidates: Sequence[str] = CPU_TEMP_CANDIDATES,

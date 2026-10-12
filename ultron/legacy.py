@@ -29,6 +29,10 @@ class Backend(Protocol):
 
     def start_background(self) -> None: ...
 
+    def run_agent(self, text: str, ctx: CommandContext) -> str: ...
+
+    def cancel_agent(self, ctx: CommandContext) -> int: ...
+
 
 class JarvisLegacyBackend:
     """Lazily imports ``main`` so that creating the app has no import side effects."""
@@ -62,3 +66,11 @@ class JarvisLegacyBackend:
 
     def start_background(self) -> None:
         self.main.start_background_services()
+
+    def run_agent(self, text: str, ctx: CommandContext) -> str:
+        """Explicit agent mode: skip the keyword router (``/ask`` with ``"mode": "agent"``)."""
+        return self.main.run_agent(text, ctx)
+
+    def cancel_agent(self, ctx: CommandContext) -> int:
+        """Stop this caller's running agent tasks (cancelling is always safe)."""
+        return self.main.AGENT_RUNS.cancel(ctx.principal) if ctx.can_authorize else 0

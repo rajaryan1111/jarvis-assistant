@@ -19,7 +19,9 @@ from openai import OpenAI
 import vision  # optional vision utilities; degrade gracefully when OpenCV/MediaPipe are missing
 import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
 import news
-from ultron.config import get_credential, load_dotenv_if_enabled
+from ultron.agent.provider import OpenAIChatProvider
+from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
+from ultron.config import get_credential, load_agent_config, load_dotenv_if_enabled
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
@@ -302,12 +304,10 @@ def play_youtube(query: str, ctx: CommandContext = None) -> str:
     return reply if outcome.status == "completed" else outcome.message
 
 
-def get_weather(cmd: str) -> str:
+def _weather_report(city: str) -> ToolResult:
+    """Current weather for ``city`` (read-only network call). Shared by the router and the agent."""
     if not WEATHER_API_KEY:
-        return "Weather API key is not configured."
-    city = DEFAULT_WEATHER_CITY
-    if " in " in cmd:
-        city = cmd.split(" in ", 1)[1].strip()
+        return ToolResult(False, "Weather API key is not configured.")
     try:
         data = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
@@ -315,13 +315,21 @@ def get_weather(cmd: str) -> str:
             timeout=5,
         ).json()
         if data.get("cod") != 200:
-            return f"Weather error for {city}."
+            return ToolResult(False, f"Weather error for {city}.")
         temp = int(data["main"]["temp"])
         desc = data["weather"][0]["description"]
-        return f"The weather in {city} is {desc}, {temp}°C."
+        return ToolResult(True, f"The weather in {city} is {desc}, {temp}°C.",
+                          {"city": city, "temperature_c": temp, "description": desc})
     except Exception as e:
         print("Weather error:", redact(e))  # request errors embed the URL, including the key
-        return "Sorry, I could not fetch the weather."
+        return ToolResult(False, "Sorry, I could not fetch the weather.")
+
+
+def get_weather(cmd: str) -> str:
+    city = DEFAULT_WEATHER_CITY
+    if " in " in cmd:
+        city = cmd.split(" in ", 1)[1].strip()
+    return _weather_report(city).message
 
 
 def get_news() -> str:
@@ -353,31 +361,32 @@ def wiki(cmd: str) -> str:
 
 
 # ================== WEB SEARCH (DUCKDUCKGO) ==================
+def _ddg_result_titles(query: str) -> list:
+    """Top result titles from DuckDuckGo's HTML page (read-only; [] on any error)."""
+    url_html = "https://duckduckgo.com/html/?q=" + urllib.parse.quote(query)
+    try:
+        res = requests.get(url_html, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
+        matches = re.findall(r'class="result__a".*?>(.*?)</a>', res.text)  # result__a anchors
+    except Exception as e:
+        print("Web search error:", type(e).__name__)
+        return []
+    return [re.sub("<.*?>", "", m).strip() for m in matches if re.sub("<.*?>", "", m).strip()]
+
+
 def web_search_ddg(query: str, ctx: CommandContext = None) -> str:
     """
     Simple real-time web search using DuckDuckGo.
     - Opens full results in browser
     - Tries to read top 2–3 result titles and speak them
     """
-    url_html = "https://duckduckgo.com/html/?q=" + urllib.parse.quote(query)
     url_main = "https://duckduckgo.com/?q=" + urllib.parse.quote(query)
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url_html, timeout=5, headers=headers)
-        html = res.text
-
-        # Grab top result titles from result__a anchors
-        matches = re.findall(r'class="result__a".*?>(.*?)</a>', html)
-    except Exception as e:
-        print("Web search error:", type(e).__name__)
-        matches = []
+    matches = _ddg_result_titles(query)
 
     # Opening the browser is a ROUTINE action; reading result titles is read-only, so an
     # untrusted caller still gets the titles but never a browser window.
     opened = _outcome("web.open_url", {"url": url_main}, ctx)
     if matches:
-        # Strip HTML tags
-        titles = [re.sub("<.*?>", "", m) for m in matches[:3]]
+        titles = matches[:3]
         return f"Here is what I found about {query}: {' ; '.join(titles)}."
     if opened.status == "completed":
         return f"I opened web results for {query} in your browser, sir."
@@ -1333,10 +1342,111 @@ def _tool_hand_gesture(_args) -> ToolResult:
     return ToolResult(True, message, {"gesture": gesture})
 
 
+# ================== READ-ONLY TOOLS (also offered to the agent loop) ==================
+# OBSERVE tier: no side effects. Those marked external_content return text from the internet,
+# which the agent treats as untrusted data (later actions in that run need HUD approval).
+def _tool_time_now(_args) -> ToolResult:
+    now = datetime.datetime.now()
+    return ToolResult(True, tell_time(), {"iso": now.isoformat(timespec="seconds"), "weekday": now.strftime("%A")})
+
+
+def _tool_system_status(_args) -> ToolResult:
+    data = {}
+    try:
+        data["cpu_percent"] = psutil.cpu_percent()
+        data["ram_percent"] = psutil.virtual_memory().percent
+    except Exception as e:
+        print("System status error:", type(e).__name__)
+    try:
+        bat = psutil.sensors_battery()
+        if bat:
+            data["battery_percent"] = bat.percent
+            data["charging"] = bool(bat.power_plugged)
+    except Exception as e:
+        print("Battery read error:", type(e).__name__)
+    if not data:
+        return ToolResult(False, "I could not read the system status.")
+    parts = [f"{key.replace('_', ' ')}: {value}" for key, value in data.items()]
+    return ToolResult(True, "System status: " + ", ".join(parts) + ".", data)
+
+
+def _tool_list_reminders(_args) -> ToolResult:
+    items = []
+    for r in memory.get("reminders", [])[:20]:
+        try:
+            when = datetime.datetime.fromtimestamp(float(r.get("time", 0))).isoformat(timespec="minutes")
+        except Exception:
+            when = "unknown"
+        items.append({"text": str(r.get("text", "")), "when": when, "repeat": r.get("repeat")})
+    return ToolResult(True, list_reminders(), {"count": len(memory.get("reminders", [])), "reminders": items})
+
+
+def _tool_list_notes(_args) -> ToolResult:
+    notes = [str(n) for n in memory.get("notes", [])]
+    message = "I remember: " + "; ".join(notes[-20:]) if notes else "I don't have anything stored yet."
+    return ToolResult(True, message, {"count": len(notes), "notes": notes[-20:]})
+
+
+def _tool_web_search(args) -> ToolResult:
+    query = str(args.get("query", "")).strip()
+    titles = _ddg_result_titles(query)[:5] if query else []
+    if not titles:
+        return ToolResult(False, f"I found no web results for {query}." if query else "Nothing to search for.")
+    return ToolResult(True, "Top web results: " + " ; ".join(titles), {"query": query, "titles": titles})
+
+
+def _tool_wiki_summary(args) -> ToolResult:
+    topic = str(args.get("topic", "")).strip()
+    if not topic:
+        return ToolResult(False, "Please tell me what to look up.")
+    try:
+        return ToolResult(True, wikipedia.summary(topic, sentences=2), {"topic": topic})
+    except Exception as e:
+        print("Wiki error:", type(e).__name__)
+        return ToolResult(False, f"I could not find information on {topic}.")
+
+
+def _tool_weather(args) -> ToolResult:
+    return _weather_report(str(args.get("city") or DEFAULT_WEATHER_CITY).strip())
+
+
+def _tool_news(_args) -> ToolResult:
+    if not get_credential("NEWS_API_KEY"):
+        return ToolResult(False, "News API key is not configured.")
+    heads = news.get_headlines()[:5]
+    if not heads:
+        return ToolResult(False, "Sorry, I could not fetch the news right now.")
+    return ToolResult(True, get_news(), {"headlines": heads})
+
+
+def _tool_add_reminder(args) -> ToolResult:
+    """``reminders.add``: success only if a reminder was actually stored (the parser can refuse)."""
+    before = len(memory.get("reminders", []))
+    reply = _tool_set_reminder(str(args.get("command", "")))
+    stored = memory.get("reminders", [])
+    if len(stored) <= before:
+        return ToolResult(False, reply, {"added": False})
+    added = stored[-1]
+    when = datetime.datetime.fromtimestamp(float(added.get("time", 0))).isoformat(timespec="minutes")
+    return ToolResult(True, reply, {"added": True, "text": added.get("text"), "when": when,
+                                    "repeat": added.get("repeat")})
+
+
+_NO_ARGS = {"type": "object", "additionalProperties": False, "properties": {}}
+
+
+def _schema(**properties):
+    """Object schema helper: every property is required unless its keyword ends with '_' (``city_=``)."""
+    props = {name.rstrip("_"): spec for name, spec in properties.items()}
+    required = [name.rstrip("_") for name in properties if not name.endswith("_")]
+    return {"type": "object", "additionalProperties": False, "required": required, "properties": props}
+
+
 def _fn_tool(name, description, risk, run, *, side_effects=(), preview=None, internal_ok=False,
-             confirm_hints=()) -> FunctionTool:
+             confirm_hints=(), parameters=None, external_content=False) -> FunctionTool:
     spec = ToolSpec(name=name, description=description, risk=risk, side_effects=frozenset(side_effects),
-                    internal_ok=internal_ok, confirm_hints=tuple(confirm_hints))
+                    internal_ok=internal_ok, confirm_hints=tuple(confirm_hints), parameters=parameters,
+                    external_content=external_content)
     return FunctionTool(spec, run, preview)
 
 
@@ -1352,7 +1462,8 @@ def _reminder_count_preview(_args) -> str:
 
 def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, opener=None,
                         screenshot_dir=None, temperature_candidates=None, voice_trust=None) -> ToolRegistry:
-    """Every state-changing legacy operation is registered here with its risk tier.
+    """Every state-changing legacy operation (and every read-only tool the agent loop may use)
+    is registered here with its risk tier.
 
     This is the complete list; docs/M1_1_TOOL_SECURITY_BOUNDARY.md mirrors it as the action/risk
     matrix and tests/test_policy_boundary.py fails if the two drift apart.
@@ -1376,11 +1487,17 @@ def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, op
     registry.register(ClearUserCachesTool(cache_dir=cache_dir))
     # --- local assistant data (memory.json, knowledge index) -----------------------------
     registry.register(_fn_tool("memory.add_note", "Store a note in memory.", R.ROUTINE, _tool_add_note,
-                               side_effects={"local_data"}))
+                               side_effects={"local_data"},
+                               parameters=_schema(fact={"type": "string", "minLength": 1, "maxLength": 500,
+                                                        "description": "The note to remember, in plain words."})))
     registry.register(_fn_tool("profile.update", "Remember your name or a favourite.", R.ROUTINE,
                                _tool_update_profile, side_effects={"local_data"}))
-    registry.register(_fn_tool("reminders.add", "Add a reminder.", R.ROUTINE, _text_tool(_tool_set_reminder),
-                               side_effects={"local_data"}))
+    registry.register(_fn_tool(
+        "reminders.add", "Add a reminder.", R.ROUTINE, _tool_add_reminder, side_effects={"local_data"},
+        parameters=_schema(command={
+            "type": "string", "minLength": 3, "maxLength": 300,
+            "description": ("What and when, in plain words, e.g. 'in 10 minutes to drink water', 'tomorrow at "
+                            "9 am to call mom', 'at 6 pm to stretch', 'every day at 7 am to walk'.")})))
     registry.register(_fn_tool("reminders.clear_all", "Delete all stored reminders.", R.DESTRUCTIVE,
                                lambda _args: ToolResult(True, _tool_clear_reminders()),
                                side_effects={"deletes_local_data"}, preview=_reminder_count_preview,
@@ -1421,10 +1538,70 @@ def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, op
                                R.ROUTINE, _tool_detect_person, side_effects={"camera"}, internal_ok=True))
     registry.register(_fn_tool("vision.hand_gesture", "Look for a hand gesture with the camera.", R.ROUTINE,
                                _tool_hand_gesture, side_effects={"camera"}))
+    # --- read-only tools (OBSERVE) --------------------------------------------------------
+    text = lambda n, d: {"type": "string", "minLength": 1, "maxLength": n, "description": d}  # noqa: E731
+    registry.register(_fn_tool("time.now", "Get the current local date and time.", R.OBSERVE, _tool_time_now,
+                               parameters=_NO_ARGS))
+    registry.register(_fn_tool("system.status", "Read CPU, memory and battery status.", R.OBSERVE,
+                               _tool_system_status, parameters=_NO_ARGS))
+    registry.register(_fn_tool("reminders.list", "List the stored reminders.", R.OBSERVE, _tool_list_reminders,
+                               parameters=_NO_ARGS))
+    registry.register(_fn_tool("memory.list_notes", "List the notes stored in memory.", R.OBSERVE,
+                               _tool_list_notes, parameters=_NO_ARGS))
+    registry.register(_fn_tool("web.search", "Search the web (DuckDuckGo) and return the top result titles.",
+                               R.OBSERVE, _tool_web_search, side_effects={"network"}, external_content=True,
+                               parameters=_schema(query=text(200, "What to search for."))))
+    registry.register(_fn_tool("wiki.summary", "Get a two-sentence Wikipedia summary of a topic.", R.OBSERVE,
+                               _tool_wiki_summary, side_effects={"network"}, external_content=True,
+                               parameters=_schema(topic=text(120, "The topic, e.g. 'Ada Lovelace'."))))
+    registry.register(_fn_tool(
+        "weather.current", "Get the current weather for a city.", R.OBSERVE, _tool_weather,
+        side_effects={"network"}, external_content=True,
+        parameters=_schema(city_={"type": "string", "minLength": 1, "maxLength": 80,
+                                  "pattern": r"[A-Za-z][A-Za-z .,'-]{0,79}",
+                                  "description": "City name; omit for the default city."})))
+    registry.register(_fn_tool("news.headlines", "Get the top news headlines.", R.OBSERVE, _tool_news,
+                               side_effects={"network"}, external_content=True, parameters=_NO_ARGS))
     return registry
 
 
 TOOLS = build_tool_registry()
+
+# ================== AGENT LOOP (M2.0) ==================
+# The model proposes; TOOLS decides and executes (same policy, confirmation and audit as every
+# other caller). Shared, bounded state: active runs (for "cancel") and tool worker threads.
+AGENT_CONFIG = load_agent_config()
+AGENT_RUNS = RunRegistry(max_concurrent=AGENT_CONFIG.max_concurrent_runs)
+AGENT_EXECUTOR = ToolExecutor(max_inflight=AGENT_CONFIG.max_concurrent_runs)
+_AGENT_PREFIX_RE = re.compile(r"^\s*agent\s*[:,]?\s+(?P<objective>\S.*)$", re.IGNORECASE | re.DOTALL)
+
+
+def agent_provider():
+    """The model behind the agent loop, or None when OPENAI_API_KEY is not configured."""
+    return OpenAIChatProvider(client, AGENT_CONFIG.model) if client else None
+
+
+def agent_available() -> bool:
+    return AGENT_CONFIG.enabled and agent_provider() is not None
+
+
+def build_agent(provider=None) -> AgentRuntime:
+    limits = AgentLimits(max_steps=AGENT_CONFIG.max_steps, max_tool_calls=AGENT_CONFIG.max_tool_calls,
+                         model_timeout=AGENT_CONFIG.model_timeout, tool_timeout=AGENT_CONFIG.tool_timeout,
+                         max_duration=AGENT_CONFIG.max_duration)
+    return AgentRuntime(TOOLS, provider if provider is not None else agent_provider(), limits=limits,
+                        runs=AGENT_RUNS, executor=AGENT_EXECUTOR)
+
+
+def run_agent(objective: str, ctx: CommandContext = None) -> str:
+    """Run the agent loop for ``objective`` as ``ctx``; the full report goes to ctx.events."""
+    ctx = ctx or CommandContext.untrusted("direct-call")
+    if not AGENT_CONFIG.enabled:
+        return "The agent loop is turned off (ULTRON_AGENT=0)."
+    report = build_agent().run(objective, ctx)
+    ctx.events.append(("agent_report", report))
+    return report.reply
+
 
 _CONFIRM_RE = re.compile(r"^(?:yes[, ]+)?(?:i\s+)?confirm\b(?P<rest>.*)$")
 _CANCEL_RE = re.compile(r"^(?:cancel|abort|never ?mind|don't do it|do not do it)\b")
@@ -1453,8 +1630,14 @@ def handle_confirmation_intents(cmd: str, ctx: CommandContext):
         expected = next((tool for hint, tool in TOOLS.confirm_hint_map() if hint in rest), None)
         outcome = TOOLS.confirm(ctx, code=_extract_code(rest), expected_tool=expected, gate=confirmation_gate)
         return outcome.message
-    if _CANCEL_RE.match(cmd) and TOOLS.has_pending(ctx):
-        return TOOLS.cancel(ctx).message
+    if _CANCEL_RE.match(cmd):
+        # Stopping is always safe: it ends this caller's running agent task (if any) too.
+        stopped = AGENT_RUNS.cancel(ctx.principal) if ctx.can_authorize else 0
+        if TOOLS.has_pending(ctx):
+            reply = TOOLS.cancel(ctx).message
+            return reply + (" I also stopped the current task." if stopped else "")
+        if stopped:
+            return "Okay, I'm stopping the current task."
     return None
 
 
@@ -1471,13 +1654,21 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     knowledge-base content are never routed here and can never confirm anything.
     """
     ctx = ctx or CommandContext.untrusted("unspecified")
-    cmd = (cmd or "").lower().strip()
+    raw = (cmd or "").strip()  # original casing, for the agent loop (URLs, names)
+    cmd = raw.lower()
     print("CMD:", cmd)
 
     # Pending-action confirmations ("confirm 1234" / "cancel") are handled first.
     confirmation_reply = handle_confirmation_intents(cmd, ctx)
     if confirmation_reply is not None:
         return confirmation_reply
+
+    # "agent: <objective>" skips the keyword router and goes straight to the agent loop.
+    explicit = _AGENT_PREFIX_RE.match(raw)
+    if explicit:
+        if jarvis_sleep:
+            return "I am currently in sleep mode. Say Jarvis wake up."
+        return run_agent(explicit.group("objective"), ctx)
 
     # Personal learning
     learned = update_profile_from_sentence(cmd, ctx)
@@ -1768,7 +1959,10 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     if cmd.startswith("who is") or cmd.startswith("what is") or cmd.startswith("tell me about"):
         return wiki(cmd)
 
-    # GPT fallback
+    # Anything the keyword router does not know goes to the agent loop (which also answers
+    # plain questions); without a configured model, or with ULTRON_AGENT=0, to the chat reply.
+    if agent_available():
+        return run_agent(raw, ctx)
     history = []  # simple history for now
     return ask_gpt(cmd, history)
 
