@@ -2,21 +2,44 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "arena/**"]
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  python-sanity:
+  test:
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    env:
+      ULTRON_SKIP_DOTENV: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.0
         with:
-          python-version: "3.11"
+          version: "0.13.0"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install core + dev dependencies (from uv.lock)
+        run: uv sync --locked --extra dev
 
       - name: Compile Python sources
-        run: python -m compileall -q .
+        run: uv run --no-sync python -m compileall -q -x '/\.venv/' .
+
+      - name: Lint
+        run: uv run --no-sync ruff check .
+
+      - name: Scan for hardcoded credentials
+        run: uv run --no-sync python -m ultron check-secrets
+
+      - name: Tests
+        run: uv run --no-sync pytest -q

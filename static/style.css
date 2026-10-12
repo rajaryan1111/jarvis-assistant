@@ -937,3 +937,120 @@ body.red-alert #send-command {
 body.red-alert #chat-box {
     text-shadow: 0 0 4px rgba(255, 80, 80, 0.7);
 }
+
+/* ========= PENDING ACTION CONFIRMATION ========= */
+.pending-action {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 170, 60, 0.85);
+    border-radius: 8px;
+    background: rgba(40, 20, 0, 0.55);
+    box-shadow: 0 0 14px rgba(255, 150, 40, 0.45);
+}
+
+.pending-action-text {
+    color: #ffd9a8;
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+}
+
+.pending-action-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.pending-action button {
+    font-family: inherit;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.pending-action .pending-confirm { border: 1px solid rgba(255, 90, 90, 0.9); }
+.pending-action .pending-cancel { border: 1px solid rgba(120, 200, 255, 0.9); }
+.pending-action button:disabled { opacity: 0.4; cursor: default; }
+.pending-action.pending-done { opacity: 0.6; box-shadow: none; }
+
+/* ========= LOGIN PAGE ========= */
+body.login-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+}
+
+.login-card {
+    width: min(440px, 92vw);
+    padding: 28px;
+    position: relative;
+    z-index: 2;
+}
+
+.login-title {
+    font-size: 1.2rem;
+    letter-spacing: 0.25em;
+    margin: 0 0 16px;
+    text-align: center;
+}
+
+.login-help {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    opacity: 0.85;
+    overflow-wrap: anywhere;
+}
+
+.login-help code {
+    font-size: 0.75rem;
+    padding: 1px 4px;
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: 4px;
+}
+
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.login-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    opacity: 0.8;
+}
+
+.login-form input {
+    font-family: monospace;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(0, 200, 255, 0.6);
+    background: rgba(0, 0, 0, 0.6);
+    color: #e6f8ff;
+}
+
+.login-form button {
+    font-family: inherit;
+    letter-spacing: 0.2em;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(0, 200, 255, 0.9);
+    background: rgba(0, 60, 90, 0.7);
+    color: #fff;
+    cursor: pointer;
+}
+
+.login-status {
+    min-height: 1.2em;
+    font-size: 0.8rem;
+    margin-top: 12px;
+}
+
+.login-error {
+    color: #ff9b9b;
+}

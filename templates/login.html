@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>J.A.R.V.I.S · Sign in</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-page">
+    <main class="login-card hud-panel panel-glow">
+        <h1 class="login-title">J.A.R.V.I.S ACCESS</h1>
+        {% if configured %}
+        <p class="login-help">
+            Run <code>python -m ultron open-hud</code> in a terminal to sign in automatically,
+            or paste your API token below (<code>python -m ultron token copy</code> copies it on macOS).
+        </p>
+        <form id="login-form" class="login-form" autocomplete="off">
+            <label for="login-token" class="login-label">API token</label>
+            <input id="login-token" name="token" type="password" spellcheck="false"
+                   autocomplete="current-password" required minlength="32" />
+            <button id="login-submit" type="submit">SIGN IN</button>
+        </form>
+        <p id="login-status" class="login-status" role="status" aria-live="polite"></p>
+        {% else %}
+        <p class="login-status login-error">Authentication is not configured, so the HUD is locked.</p>
+        <p class="login-help">{{ setup_message }}</p>
+        <p class="login-help">Then restart the server with <code>python server.py</code>.</p>
+        {% endif %}
+    </main>
+    {% if configured %}
+    <script src="{{ url_for('static', filename='login.js') }}"></script>
+    {% endif %}
+</body>
+</html>

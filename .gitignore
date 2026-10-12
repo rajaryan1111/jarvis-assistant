@@ -1,29 +1,51 @@
-# Environment / secrets
+# Environment / secrets — never commit these
 .env
+.env.*
+!.env.example
 *.env
+api_token
+*.token
+*.pem
+*.key
+*.p12
+credentials*.json
+secrets*.json
+.netrc
 
 # Virtual environments
 .jarvis_env/
+jarvis_env/
 .venv/
 venv/
 env/
 
-# Python cache
+# Python cache / tooling
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
 
-# Generated / local application data
+# Generated / local application data (personal data: never commit)
 faces/
 memory.json
+*.memory.json
+*.db
+*.sqlite
+*.sqlite3
 knowledge_index.json
-knowledge_docs/*.pdf
+knowledge_docs/
 screenshot_*.png
 
 # Generated model / evaluation artefacts
 models/
+*.task
 datasets/*.csv
 results/*.png
 
 # macOS + editor
 .DS_Store
 .vscode/
+.idea/

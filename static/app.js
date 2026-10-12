@@ -19,6 +19,38 @@ document.addEventListener("DOMContentLoaded", () => {
     const WAKE_WORD = "jarvis";
 
     // --------------------------
+    //   AUTHENTICATED API ACCESS
+    // --------------------------
+    // The HUD is authenticated by an HttpOnly session cookie set at /login. State-changing
+    // requests also carry the per-session CSRF token from the page. No API token or key is
+    // ever present in this file or the page.
+    const csrfMeta  = document.querySelector('meta[name="csrf-token"]');
+    const CSRF_TOKEN = csrfMeta ? csrfMeta.getAttribute("content") : "";
+
+    async function apiFetch(path, { method = "GET", body } = {}) {
+        const headers = { "Accept": "application/json" };
+        const init = { method, headers, credentials: "same-origin", cache: "no-store" };
+        if (method !== "GET") {
+            headers["Content-Type"] = "application/json";
+            headers["X-CSRF-Token"] = CSRF_TOKEN;
+            init.body = JSON.stringify(body || {});
+        }
+        const res = await fetch(path, init);
+        if (res.status === 401) {
+            window.location.assign("/login");
+            throw new Error("Session expired");
+        }
+        let data = {};
+        try { data = await res.json(); } catch (e) { data = {}; }
+        if (!res.ok) {
+            const err = new Error(data.message || ("Request failed (" + res.status + ")"));
+            err.status = res.status;
+            throw err;
+        }
+        return data;
+    }
+
+    // --------------------------
     //   BASIC CHAT UI HELPERS
     // --------------------------
     function addMessage(text, sender) {
@@ -37,16 +69,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!text) return;
 
         // Always ask backend (Mac) to speak
-        try {
-            console.log("Sending to backend /speak:", text);
-            fetch("/speak", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text })
-            });
-        } catch (e) {
-            console.log("Speech request error:", e);
-        }
+        apiFetch("/speak", { method: "POST", body: { text: text.slice(0, 1000) } })
+            .catch((e) => console.log("Speech request error:", e.message));
 
         // Old browser speech logic is intentionally NOT executed
         // to avoid double-speaking on phone.
@@ -92,36 +116,115 @@ document.addEventListener("DOMContentLoaded", () => {
     // --------------------------
     //   BACKEND COMMUNICATION
     // --------------------------
-    async function sendToJarvis(text) {
+    // source "voice" marks speech-recognised commands: the server then applies the voice trust
+    // rules (voice can ask for high-impact actions but never approve them).
+    async function sendToJarvis(text, source) {
         if (!text) return;
         addMessage(text, "user");
 
         try {
-            const res = await fetch("/ask", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: text })
-            });
-            const data = await res.json();
+            const body = { message: text };
+            if (source === "voice") body.input = "voice";
+            const data = await apiFetch("/ask", { method: "POST", body: body });
             const reply = data.reply || "I did not get a reply from the server.";
             addMessage(reply, "jarvis");
+            if (data.pending_action) {
+                showPendingAction(data.pending_action);
+            }
 
             // Mac speaks reply (once)
             speak(reply);
         } catch (err) {
-            console.error("Backend error:", err);
-            addMessage("There was an error contacting the server.", "jarvis");
-            speak("There was an error contacting the server, sir.");
+            console.error("Backend error:", err.message);
+            if (err.message === "Session expired") return;
+            addMessage(err.status ? err.message : "There was an error contacting the server.", "jarvis");
         }
     }
+
+    // --------------------------
+    //   PENDING ACTION CONFIRMATION
+    // --------------------------
+    // Destructive actions (shutdown, restart, cache cleanup, clearing reminders) only run
+    // after the user confirms *this specific* pending action before it expires. Requests made
+    // by voice (wake word) or API clients can only be approved here, so they are polled.
+    const shownPending = new Set();
+
+    function showPendingAction(pending) {
+        if (!chatBox || !pending || !pending.action_id) return;
+        if (shownPending.has(pending.action_id)) return;
+        shownPending.add(pending.action_id);
+        const box = document.createElement("div");
+        box.className = "pending-action";
+
+        const label = document.createElement("div");
+        label.className = "pending-action-text";
+        const via = pending.requested_via && pending.requested_via !== "hud"
+            ? " [requested by " + pending.requested_via + "]" : "";
+        label.textContent = "CONFIRM: " + (pending.summary || pending.tool || "pending action") + via;
+        box.appendChild(label);
+
+        const buttons = document.createElement("div");
+        buttons.className = "pending-action-buttons";
+        const confirmBtn = document.createElement("button");
+        confirmBtn.type = "button";
+        confirmBtn.className = "pending-confirm";
+        confirmBtn.textContent = "CONFIRM";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "pending-cancel";
+        cancelBtn.textContent = "CANCEL";
+        buttons.appendChild(confirmBtn);
+        buttons.appendChild(cancelBtn);
+        box.appendChild(buttons);
+        chatBox.appendChild(box);
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        const ttlMs = Math.max(0, (pending.expires_in || 0) * 1000);
+        const expiry = setTimeout(() => finish("(expired)"), ttlMs);
+
+        function finish(note) {
+            clearTimeout(expiry);
+            confirmBtn.disabled = true;
+            cancelBtn.disabled = true;
+            box.classList.add("pending-done");
+            if (note) label.textContent += " " + note;
+        }
+
+        async function resolve(path, payload) {
+            finish();
+            try {
+                const data = await apiFetch(path, { method: "POST", body: payload });
+                if (data.reply) {
+                    addMessage(data.reply, "jarvis");
+                    speak(data.reply);
+                }
+            } catch (err) {
+                if (err.message !== "Session expired") addMessage(err.message, "jarvis");
+            }
+        }
+
+        confirmBtn.addEventListener("click", () => resolve("/confirm", { action_id: pending.action_id }));
+        cancelBtn.addEventListener("click", () => resolve("/cancel", { action_id: pending.action_id }));
+    }
+
+    async function pollPending() {
+        if (document.hidden) return;
+        try {
+            const data = await apiFetch("/pending");
+            (data.pending || []).forEach(showPendingAction);
+        } catch (e) {
+            // ignore errors
+        }
+    }
+
+    setInterval(pollPending, 3000);
 
     // --------------------------
     //   STATUS POLLING (HUD)
     // --------------------------
     async function pollStatus() {
         try {
-            const res = await fetch("/status");
-            const data = await res.json();
+            const data = await apiFetch("/status");
             if (hudTime && data.time) {
                 hudTime.textContent = data.time;
             }
@@ -215,7 +318,7 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             // Normal command → backend
-            sendToJarvis(cmd);
+            sendToJarvis(cmd, "voice");
 
             // 🔁 IMPORTANT:
             // After every full command, reset recognition so browser
