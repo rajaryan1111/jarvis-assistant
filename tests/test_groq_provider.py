@@ -587,30 +587,46 @@ def test_live_credentials_are_captured_only_when_opted_in(tmp_path):
 
 
 # ============================================================ 9. fixes from the first real Groq run
-# A real macOS run returned HTTP 400 ``output_parse_failed`` (not documented by Groq; checked
-# 2026-10-13) and a multi-step run that ended with no error and no completed tool, which the
-# summary could not explain. These pin the fail-closed handling and the content-free diagnostics.
+# A real macOS run repeatedly returned HTTP 400 output_parse_failed on a follow-up turn
+# (not documented by Groq; checked 2026-10-13). Treat only this exact code as malformed generated
+# output and retry within the same invalid-call and step limits as tool_use_failed.
 def output_parse_failed():
     return 400, {"error": {"message": "BODY-OPF output could not be parsed", "type": "invalid_request_error",
                            "code": "output_parse_failed", "failed_generation": FAILED_GENERATION}}
 
 
-def test_output_parse_failed_fails_closed_without_retrying_or_running_anything(legacy, stub, caplog):
+def test_output_parse_failed_retries_and_finishes_without_repeating_a_completed_action(legacy, stub, caplog):
     ran = []
     register(legacy, "demo.light", RiskTier.ROUTINE, lambda a: ran.append(a) or ToolResult(True, "on"))
-    stub.script(output_parse_failed(), groq_completion(tool_calls=[(
-        "call_g1", model_name("demo.light"), "{}")]), groq_completion("never fetched"))
+    stub.script(
+        groq_completion(tool_calls=[("call_g1", model_name("demo.light"), "{}")]),
+        output_parse_failed(),
+        groq_completion(tool_calls=[finish_call("call_g3", "The lamp is on.", evidence="c1")]),
+    )
     with caplog.at_level(logging.DEBUG):
         report = runtime(legacy, groq(stub), ["demo.light"]).run("turn on the lamp", owner_hud())
-    assert ran == [] and len(stub.requests) == 1  # undocumented: not treated as retryable
-    assert (report.status, report.error, report.error_code) == ("failed", "rejected", "output_parse_failed")
-    assert report.stop_reason == "provider_error" and report.verified is False and report.steps == []
-    # Says what happened instead of the misleading "check the model supports tool calling".
-    assert "could not parse the language model's output" in report.reply and "supports tool" not in report.reply
+    assert report.status == "completed" and report.verified is True and ran == [{}]
+    assert [(s.tool, s.status) for s in report.steps] == [
+        ("demo.light", "completed"), (MALFORMED_OUTPUT, "invalid")
+    ]
+    assert len(stub.requests) == 3 and report.stop_reason == "finish_tool"
     for text in (report.reply, caplog.text, repr(report)):
         assert "PRIVATE-NOTE-4410" not in text and "failed_generation" not in text and "BODY-OPF" not in text
-    end = [r.getMessage() for r in caplog.records if " end status=" in r.getMessage()]
-    assert len(end) == 1 and "stop=provider_error" in end[0] and "error=rejected code=output_parse_failed" in end[0]
+
+
+def test_repeated_output_parse_failures_are_bounded_and_never_repeat_the_action(legacy, stub):
+    ran = []
+    register(legacy, "demo.light", RiskTier.ROUTINE, lambda a: ran.append(a) or ToolResult(True, "on"))
+    stub.script(groq_completion(tool_calls=[("call_g1", model_name("demo.light"), "{}")]),
+                output_parse_failed(), output_parse_failed(), output_parse_failed(),
+                groq_completion("never fetched"))
+    report = runtime(legacy, groq(stub), ["demo.light"]).run("turn on the lamp", owner_hud())
+    assert report.status == "failed" and report.stop_reason == "invalid_calls" and ran == [{}]
+    assert len(stub.requests) == 4 and report.usage["model_calls"] == 4
+    assert [(s.tool, s.status) for s in report.steps] == [
+        ("demo.light", "completed"), (MALFORMED_OUTPUT, "invalid"),
+        (MALFORMED_OUTPUT, "invalid"), (MALFORMED_OUTPUT, "invalid")
+    ]
 
 
 def test_other_http_400s_keep_the_generic_rejection_and_are_not_retried(stub):
