@@ -2,6 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Per-session CSRF token (not the API token); sent as X-CSRF-Token on state-changing requests. -->
+    <meta name="csrf-token" content="{{ csrf_token }}" />
     <title>J.A.R.V.I.S Control Center</title>
 
     <!-- Fonts -->

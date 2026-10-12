@@ -6,33 +6,39 @@ import urllib.parse
 import re
 import webbrowser
 import time
+import threading
 from threading import Thread
-from typing import Tuple  # <-- NEW
+from typing import Tuple
 
 import requests
 import wikipedia
 import psutil
-import speech_recognition as sr
-from dotenv import load_dotenv
 from openai import OpenAI
 
-import vision  # your vision utilities (register_face, recognize_face, etc.)
-import knowledge  # Personal Knowledge Base (RAG over notes/PDFs)
+import vision  # optional vision utilities; degrade gracefully when OpenCV/MediaPipe are missing
+import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
+import news
+from ultron.config import get_credential, load_dotenv_if_enabled
+from ultron.security.policy import CommandContext, RiskTier
+from ultron.security.redact import redact
+from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
+from ultron.tools.registry import ToolRegistry
+from ultron.tools.system import ClearUserCachesTool, PowerTool
 
 # ================== SETUP ==================
-load_dotenv()
+load_dotenv_if_enabled()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
-NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+# Credentials are read from the environment / local .env only (never hardcoded).
+OPENAI_API_KEY = get_credential("OPENAI_API_KEY")
+WEATHER_API_KEY = get_credential("WEATHER_API_KEY")
 NEWS_COUNTRY = os.getenv("NEWS_COUNTRY", "in")
 DEFAULT_WEATHER_CITY = os.getenv("WEATHER_CITY", "Delhi")
-CRICKET_API_KEY = os.getenv("CRICKET_API_KEY")  # live cricket API key
+CRICKET_API_KEY = get_credential("CRICKET_API_KEY")  # live cricket API key
 
 client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-recognizer = sr.Recognizer()
+_recognizer = None  # created lazily; SpeechRecognition is an optional "voice" extra
 
-MEMORY_FILE = "memory.json"
+MEMORY_FILE = os.getenv("ULTRON_MEMORY_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory.json")
 WAKE_WORD = "jarvis"
 jarvis_sleep = False
 
@@ -51,6 +57,10 @@ def speak(text: str):
 
     print(f"[JARVIS SPEAK] {text}")  # debug
 
+    # A message starting with "-" would be parsed by `say` as an option (e.g. "-o file").
+    if text.startswith("-"):
+        text = " " + text
+
     try:
         # Use absolute path to 'say' to avoid PATH issues
         subprocess.run(
@@ -63,7 +73,17 @@ def speak(text: str):
 
 
 def listen(timeout=6, phrase_time_limit=8) -> str:
-    """Microphone listening (only for CLI main loop)."""
+    """Microphone listening (only for CLI main loop). Requires the optional 'voice' extra."""
+    global _recognizer
+    try:
+        import speech_recognition as sr
+    except ImportError:
+        print("Voice input needs the optional 'voice' extra: uv sync --extra voice  (or pip install -e '.[voice]')")
+        time.sleep(2)
+        return ""
+    if _recognizer is None:
+        _recognizer = sr.Recognizer()
+    recognizer = _recognizer
     with sr.Microphone() as source:
         recognizer.adjust_for_ambient_noise(source, duration=0.4)
         print("Listening...")
@@ -113,10 +133,18 @@ def load_memory():
         }
 
 
+_memory_lock = threading.RLock()
+
+
 def save_memory(mem):
+    """Atomic write (temp file + rename) so a crash or concurrent save cannot corrupt the file."""
+    tmp_path = f"{MEMORY_FILE}.tmp"
     try:
-        with open(MEMORY_FILE, "w") as f:
-            json.dump(mem, f, indent=2)
+        with _memory_lock:
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(mem, f, indent=2)
+            os.replace(tmp_path, MEMORY_FILE)
     except Exception as e:
         print("Memory save error:", e)
 
@@ -231,35 +259,32 @@ def get_weather(cmd: str) -> str:
     city = DEFAULT_WEATHER_CITY
     if " in " in cmd:
         city = cmd.split(" in ", 1)[1].strip()
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={urllib.parse.quote(city)}&appid={WEATHER_API_KEY}&units=metric"
     try:
-        data = requests.get(url, timeout=5).json()
+        data = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={"q": city, "appid": WEATHER_API_KEY, "units": "metric"},
+            timeout=5,
+        ).json()
         if data.get("cod") != 200:
             return f"Weather error for {city}."
         temp = int(data["main"]["temp"])
         desc = data["weather"][0]["description"]
         return f"The weather in {city} is {desc}, {temp}°C."
     except Exception as e:
-        print("Weather error:", e)
+        print("Weather error:", redact(e))  # request errors embed the URL, including the key
         return "Sorry, I could not fetch the weather."
 
 
 def get_news() -> str:
-    if not NEWS_API_KEY:
+    """Top headlines via news.py (key sent in a header, never in the URL)."""
+    if not get_credential("NEWS_API_KEY"):
         return "News API key is not configured."
-    try:
-        url = f"https://newsapi.org/v2/top-headlines?country={NEWS_COUNTRY}&apiKey={NEWS_API_KEY}"
-        data = requests.get(url, timeout=5).json()
-        arts = data.get("articles", [])[:5]
-        if not arts:
-            return "No news articles found."
-        heads = [a.get("title") for a in arts if a.get("title")]
-        return "Here are top headlines. " + " ".join(
-            [f"Headline {i+1}: {h}." for i, h in enumerate(heads)]
-        )
-    except Exception as e:
-        print("News error:", e)
-        return "Sorry, I could not fetch the news."
+    heads = news.get_headlines()[:5]
+    if not heads:
+        return "Sorry, I could not fetch the news right now."
+    return "Here are top headlines. " + " ".join(
+        [f"Headline {i+1}: {h}." for i, h in enumerate(heads)]
+    )
 
 
 def wiki(cmd: str) -> str:
@@ -322,10 +347,12 @@ def get_live_cricket_score(cmd: str) -> str:
         return "Live cricket API key is not configured in my system, sir."
 
     try:
-        url = f"https://api.cricapi.com/v1/currentMatches?apikey={CRICKET_API_KEY}&offset=0"
-        resp = requests.get(url, timeout=8)
+        resp = requests.get(
+            "https://api.cricapi.com/v1/currentMatches",
+            params={"apikey": CRICKET_API_KEY, "offset": 0},
+            timeout=8,
+        )
         data = resp.json()
-        print("DEBUG Cricket response:", data)
 
         # Different APIs might use different keys; try to be defensive.
         matches = data.get("data") or data.get("matches") or []
@@ -379,7 +406,7 @@ def get_live_cricket_score(cmd: str) -> str:
         else:
             return f"{name}. {score_text}."
     except Exception as e:
-        print("Cricket live error:", e)
+        print("Cricket live error:", redact(e))
         return "I tried to fetch the live cricket score, but something went wrong, sir."
 
 
@@ -439,19 +466,8 @@ def system_report() -> str:
     return base
 
 
-def clean_system() -> str:
-    """
-    Simple cache cleaner.
-    Deletes files inside ~/Library/Caches (not the folder itself).
-    """
-    try:
-        cache_dir = os.path.expanduser("~/Library/Caches")
-        cmd = f'rm -rf "{cache_dir}"/*'
-        subprocess.run(cmd, shell=True)
-        return "Cleanup complete. I removed some temporary cache files, sir."
-    except Exception as e:
-        print("Clean system error:", e)
-        return "I tried to clean the system, but macOS did not allow me, sir."
+# Cache cleanup now lives in ultron.tools.system.ClearUserCachesTool: no shell, no globbing,
+# symlinks never followed, and it only runs after an explicit, code-bound confirmation.
 
 
 # ================== APP / SYSTEM CONTROL ==================
@@ -712,9 +728,10 @@ def set_reminder(cmd: str) -> str:
             h_raw = m.group(1) or 9
             h, mi = parse_time_hm(h_raw, m.group(2), m.group(3))
             trigger_dt = datetime.datetime.combine(base_date, datetime.time(hour=h, minute=mi))
+            desc = text.replace(m.group(0), "", 1).strip()  # remove "tomorrow at 9 am", not just "tomorrow"
         else:
             trigger_dt = datetime.datetime.combine(base_date, datetime.time(hour=9, minute=0))
-        desc = text.replace("tomorrow", "").strip()
+            desc = text.replace("tomorrow", "").strip()
         if desc.startswith("at "):
             desc = desc[3:]
         if desc.startswith("to "):
@@ -739,7 +756,7 @@ def set_reminder(cmd: str) -> str:
                     trigger_dt = datetime.datetime.combine(base_date, datetime.time(hour=h, minute=mi))
                 else:
                     trigger_dt = datetime.datetime.combine(base_date, datetime.time(hour=9, minute=0))
-                desc = re.sub(marker, "", text, count=1).strip()
+                desc = text.replace(m.group(0), "", 1).strip() if m else text.replace(marker, "", 1).strip()
                 if desc.startswith("at "):
                     desc = desc[3:]
                 if desc.startswith("to "):
@@ -760,7 +777,8 @@ def set_reminder(cmd: str) -> str:
 
     # 5) in X minutes/hours  (existing behaviour)
     if trigger_dt is None:
-        m = re.search(r"in\s+(\d+)\s+(minute|minutes|hour|hours)", text)
+        # Plural forms must match fully, otherwise "minutes" leaves a stray "s" in the text.
+        m = re.search(r"in\s+(\d+)\s+(minutes?|hours?)\b", text)
         if m:
             amount = int(m.group(1))
             unit = m.group(2)
@@ -935,7 +953,12 @@ def security_check() -> Tuple[bool, str]:
     if now_ts - last_auth < timeout:
         return True, ""
 
-    # Need fresh face verification
+    if not vision.face_available():
+        # Fail closed: security mode is on but the camera check cannot run.
+        return False, ("Security mode is enabled, but vision support is not installed, so I cannot verify you. "
+                       "Install the 'vision' extra or say 'disable security mode'.")
+
+    # Need fresh face verification (prototype only; not real authentication)
     same, score = vision.recognize_face("raj")
     if score is None:
         return False, "Security check failed, sir. I do not have your face stored. Say 'register my face' first."
@@ -956,7 +979,7 @@ def intruder_watcher():
     while True:
         try:
             time.sleep(10)
-            if not is_security_enabled():
+            if not is_security_enabled() or not vision.face_available():
                 continue
 
             # Quick cheap check first
@@ -1135,27 +1158,118 @@ def update_study_progress(cmd: str) -> str:
 
 
 # ================== WATCHERS THREADS START ==================
-try:
-    reminder_thread = Thread(target=reminder_watcher, daemon=True)
-    reminder_thread.start()
-except Exception as e:
-    print("Reminder watcher start error:", e)
+# Threads are no longer started at import time (importing main from tests, tools or a
+# reloader parent process used to start duplicate watchers). Entry points call this once.
+_background_lock = threading.Lock()
+_background_started = False
 
-try:
-    intruder_thread = Thread(target=intruder_watcher, daemon=True)
-    intruder_thread.start()
-except Exception as e:
-    print("Intruder watcher start error:", e)
+
+def start_background_services() -> bool:
+    """Start the reminder and intruder watcher threads exactly once per process."""
+    global _background_started
+    with _background_lock:
+        if _background_started:
+            return False
+        for name, target in (("reminder-watcher", reminder_watcher), ("intruder-watcher", intruder_watcher)):
+            try:
+                Thread(target=target, name=name, daemon=True).start()
+            except Exception as e:
+                print(f"{name} start error:", e)
+        _background_started = True
+        return True
+
+
+# ================== SENSITIVE ACTIONS (RISK-CHECKED TOOLS) ==================
+def confirmation_gate(pending) -> Tuple[bool, str]:
+    """Extra check run right before a confirmed action executes (legacy face-based security mode)."""
+    ok, msg = security_check()
+    return ok, msg
+
+
+def _clear_reminders_tool() -> FunctionTool:
+    def preview(_args) -> str:
+        count = len(memory.get("reminders", []))
+        return f"This will permanently delete all {count} reminder{'s' if count != 1 else ''}."
+
+    def run(_args) -> ToolResult:
+        return ToolResult(True, clear_reminders())
+
+    spec = ToolSpec(
+        name="reminders.clear_all",
+        description="Delete all stored reminders.",
+        risk=RiskTier.DESTRUCTIVE,
+        side_effects=frozenset({"deletes_local_data"}),
+    )
+    return FunctionTool(spec, run, preview)
+
+
+def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None) -> ToolRegistry:
+    """Every destructive or high-impact legacy operation is registered here with its risk tier."""
+    registry = ToolRegistry(platform=platform) if platform else ToolRegistry()
+    registry.register(PowerTool("restart", runner=runner))
+    registry.register(PowerTool("shut down", runner=runner))
+    registry.register(ClearUserCachesTool(cache_dir=cache_dir))
+    registry.register(_clear_reminders_tool())
+    return registry
+
+
+TOOLS = build_tool_registry()
+
+_CONFIRM_RE = re.compile(r"^(?:yes[, ]+)?(?:i\s+)?confirm\b(?P<rest>.*)$")
+_CANCEL_RE = re.compile(r"^(?:cancel|abort|never ?mind|don't do it|do not do it)\b")
+_DIGIT_WORDS = {"zero": "0", "oh": "0", "one": "1", "two": "2", "to": "2", "too": "2", "three": "3",
+                "four": "4", "for": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"}
+_CONFIRM_TOOL_HINTS = (
+    ("restart", "system.restart"),
+    ("shut down", "system.shutdown"),
+    ("shutdown", "system.shutdown"),
+    ("cache", "system.clear_user_caches"),
+    ("clean", "system.clear_user_caches"),
+    ("reminder", "reminders.clear_all"),
+)
+
+
+def _extract_code(text: str):
+    """Pull a 4-digit confirmation code from "1234", "12 34" or spoken words ("four eight two one")."""
+    digits = "".join(re.findall(r"\d", text))
+    if len(digits) >= 4:
+        return digits[:4]
+    sequence = "".join(tok if tok.isdigit() else _DIGIT_WORDS.get(tok, "") for tok in re.findall(r"\d+|[a-z]+", text))
+    return sequence[:4] if len(sequence) >= 4 else None
+
+
+def handle_confirmation_intents(cmd: str, ctx: CommandContext):
+    """'confirm <code>' / 'cancel' for pending actions. Returns a reply, or None if not applicable."""
+    m = _CONFIRM_RE.match(cmd)
+    if m:
+        rest = m.group("rest")
+        expected = next((tool for hint, tool in _CONFIRM_TOOL_HINTS if hint in rest), None)
+        outcome = TOOLS.confirm(ctx, code=_extract_code(rest), expected_tool=expected, gate=confirmation_gate)
+        return outcome.message
+    if _CANCEL_RE.match(cmd) and TOOLS.has_pending(ctx):
+        return TOOLS.cancel(ctx).message
+    return None
 
 
 # ================== MAIN COMMAND HANDLER ==================
-def handle_command(cmd: str) -> str:
+def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     """
     Main brain used by Flask (/ask) and also CLI mode.
+
+    ``ctx`` says who is asking. Without one, the request is treated as untrusted: routine
+    legacy commands still work, but risk-checked actions (shutdown, restart, cache cleanup,
+    clearing reminders) are refused. Only text typed or spoken by an authenticated user
+    reaches this function; LLM replies and knowledge-base content are never routed here.
     """
     global jarvis_sleep, memory
+    ctx = ctx or CommandContext.untrusted("unspecified")
     cmd = (cmd or "").lower().strip()
     print("CMD:", cmd)
+
+    # Pending-action confirmations ("confirm 1234" / "cancel") are handled first.
+    confirmation_reply = handle_confirmation_intents(cmd, ctx)
+    if confirmation_reply is not None:
+        return confirmation_reply
 
     # Personal learning
     learned = update_profile_from_sentence(cmd)
@@ -1222,7 +1336,7 @@ def handle_command(cmd: str) -> str:
         return list_reminders()
 
     if "clear reminders" in cmd or "delete all reminders" in cmd:
-        return clear_reminders()
+        return TOOLS.request("reminders.clear_all", {}, ctx).message
 
     # ===== SECURITY MODE COMMANDS =====
     if (
@@ -1353,48 +1467,23 @@ def handle_command(cmd: str) -> str:
             return f"Current CPU temperature is {temp}. Everything looks under control, sir."
         return "I could not read the temperature sensors, but performance seems normal, sir."
 
+    # Destructive actions: the registry checks who is asking and creates a pending action
+    # with a one-time code. Nothing runs until "confirm <code>" (or the HUD button) arrives
+    # from the same authenticated user before it expires. Face-based security mode, when
+    # enabled, is checked again right before execution (confirmation_gate).
     if (
         "clean my system" in cmd
         or "clean system" in cmd
         or "clear junk" in cmd
         or "clear cache" in cmd
     ):
-        ok, msg = security_check()
-        if not ok:
-            return msg
-        return clean_system()
+        return TOOLS.request("system.clear_user_caches", {}, ctx).message
 
-    if "restart system" in cmd or "system restart" in cmd:
-        return "Are you sure you want me to restart this Mac, sir? Say confirm restart if you really want that."
+    if "restart system" in cmd or "system restart" in cmd or "restart the system" in cmd:
+        return TOOLS.request("system.restart", {}, ctx).message
 
-    if "confirm restart" in cmd:
-        ok, msg = security_check()
-        if not ok:
-            return msg
-        try:
-            subprocess.run(
-                ["osascript", "-e", 'tell application "System Events" to restart']
-            )
-            return "Restarting now, sir."
-        except Exception as e:
-            print("Restart error:", e)
-            return "I tried to restart, but macOS blocked me, sir."
-
-    if "shutdown system" in cmd or "shut down system" in cmd:
-        return "Do you really want me to shut down this Mac, sir? Say confirm shutdown if yes."
-
-    if "confirm shutdown" in cmd:
-        ok, msg = security_check()
-        if not ok:
-            return msg
-        try:
-            subprocess.run(
-                ["osascript", "-e", 'tell application "System Events" to shut down']
-            )
-            return "Shutting down now, sir."
-        except Exception as e:
-            print("Shutdown error:", e)
-            return "I tried to shut down, but macOS blocked me, sir."
+    if "shutdown system" in cmd or "shut down system" in cmd or "shut down the system" in cmd:
+        return TOOLS.request("system.shutdown", {}, ctx).message
 
     # ===== SMART HOME (VIRTUAL) =====
     if (
@@ -1444,7 +1533,15 @@ def handle_command(cmd: str) -> str:
     if "screenshot" in cmd or "screen shot" in cmd:
         return take_screenshot()
 
-    # Vision
+    # Vision (optional extra)
+    vision_phrases = ("register my face", "remember my face", "do you see me", "who is in front of you",
+                      "check my hand", "see my hand", "do you see anyone", "what do you see")
+    if any(p in cmd for p in vision_phrases) and not vision.face_available():
+        return vision.unavailable_message()
+
+    if ("check my hand" in cmd or "see my hand" in cmd) and vision.hands_backend() is None:
+        return vision.unavailable_message(hands=True)
+
     if "register my face" in cmd or "remember my face" in cmd:
         ok = vision.register_face("raj")
         return "I have registered your face, sir." if ok else "I could not capture your face."
@@ -1484,7 +1581,21 @@ def handle_command(cmd: str) -> str:
 
 
 # ================== OPTIONAL CLI LOOP ==================
+_EXIT_PHRASES = frozenset({
+    "exit", "quit", "stop", "stop listening", "goodbye", "good bye", "bye",
+    "exit jarvis", "quit jarvis", "goodbye jarvis", "jarvis exit", "jarvis stop",
+})
+
+
+def is_exit_command(text: str) -> bool:
+    """Only whole exit phrases end the CLI loop ("stop the music" or "shutdown system" do not)."""
+    return text.strip().strip(".!?").lower() in _EXIT_PHRASES
+
+
 def main():
+    load_dotenv_if_enabled()
+    start_background_services()
+    ctx = CommandContext.local_voice()  # the person at this machine's microphone
     # Boot voice: Tony-ish
     speak("JARVIS system initializing. Welcome back, sir. You can ask me anything.")
     while True:
@@ -1493,10 +1604,10 @@ def main():
             continue
         if WAKE_WORD in text:
             text = text.replace(WAKE_WORD, "").strip()
-        if any(x in text for x in ["exit", "stop", "shutdown"]):
-            speak("Shutting down, sir.")
+        if is_exit_command(text):
+            speak("Goodbye, sir.")
             break
-        reply = handle_command(text)
+        reply = handle_command(text, ctx)
         speak(reply)
 
 

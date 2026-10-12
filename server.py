@@ -1,42 +1,14 @@
-from flask import Flask, request, jsonify, render_template
-from main import handle_command, get_status, speak
+"""Start the JARVIS HUD server.
 
-app = Flask(__name__)
+Kept for backwards compatibility with ``python server.py``. The server now lives in
+``ultron.api.app``: it binds to 127.0.0.1, runs with debug off, and requires
+authentication for every sensitive or state-changing endpoint. See README
+("Running the HUD") for first-time setup (``python -m ultron token init``).
+"""
 
+import sys
 
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-
-@app.route("/ask", methods=["POST"])
-def ask_jarvis():
-    data = request.get_json(force=True)
-    message = data.get("message", "")
-    print("[/ask] Message:", message)
-
-    reply = handle_command(message)
-    print("[/ask] Reply:", reply)
-
-    # Frontend calls /speak to avoid double speaking
-    return jsonify({"reply": reply})
-
-
-@app.route("/status")
-def status():
-    return jsonify(get_status())
-
-
-@app.route("/speak", methods=["POST"])
-def speak_route():
-    data = request.get_json(force=True)
-    text = data.get("text", "")
-    print("[/speak] Request:", text)
-    if text:
-        speak(text)
-    return jsonify({"ok": True})
-
+from ultron.api.app import run
 
 if __name__ == "__main__":
-    # 0.0.0.0 so phone on same Wi-Fi can open the UI
-    app.run(host="0.0.0.0", port=5001, debug=True)
+    sys.exit(run())

@@ -1,37 +1,56 @@
+"""Porcupine wake-word listener: say "Jarvis", then a command, which is sent to the HUD server.
+
+Requirements (optional "wakeword" extra): ``uv sync --extra wakeword``.
+Configuration (in ``.env`` or your shell, never in this file):
+  PICOVOICE_ACCESS_KEY  your Picovoice AccessKey (https://console.picovoice.ai/)
+  ULTRON_API_TOKEN / API token file  created by ``python -m ultron token init``
+The HUD server (``python server.py``) must be running.
+"""
+
 import os
 import struct
+import sys
 
-import pvporcupine
-import pyaudio
 import requests
-import speech_recognition as sr
 
-# ================== CONFIG ==================
+from ultron.config import MissingCredentialError, load_dotenv_if_enabled, load_settings, require_credential
+from ultron.security.redact import redact
+from ultron.security.tokens import load_api_token
 
-# 👉 PASTE YOUR PICOVOICE ACCESS KEY HERE:
-ACCESS_KEY = "pv_z5GeuLBli3kyYr64C9xmqb6ohCSFg/fR3BcjmSfM9agHbIjyZ+OtOQ=="
-
-# Flask server URL (your existing JARVIS backend)
-SERVER_URL = "http://127.0.0.1:5001/ask"
-
-# Keyword file path (jarvis.ppn in your project folder)
-KEYWORD_PATH = "jarvis.ppn"
+# Keyword file path (jarvis.ppn in the project folder)
+KEYWORD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis.ppn")
+REQUEST_TIMEOUT = (3, 60)  # (connect, read) seconds
 
 
 # ================== HELPERS ==================
 
-def send_to_server(cmd: str):
-    """Send recognized command text to your Flask /ask route."""
-    try:
-        res = requests.post(SERVER_URL, json={"message": cmd})
-        data = res.json()
-        reply = data.get("reply", "")
-        print(f"Jarvis reply: {reply}")
-    except Exception as e:
-        print("Error talking to server:", e)
+class ServerClient:
+    """Talks to the local HUD server with the bearer API token (never printed)."""
+
+    def __init__(self, base_url: str, token: str):
+        self.base_url = base_url.rstrip("/")
+        self.session = requests.Session()
+        self.session.headers.update({"Authorization": f"Bearer {token}", "X-Ultron-Client": "wakeword"})
+
+    def _post(self, path: str, payload: dict) -> dict:
+        res = self.session.post(f"{self.base_url}{path}", json=payload, timeout=REQUEST_TIMEOUT)
+        if res.status_code == 401:
+            raise RuntimeError("the server rejected the API token (run `python -m ultron token show` to check it)")
+        res.raise_for_status()
+        return res.json()
+
+    def send_command(self, cmd: str) -> None:
+        """Send recognized command text to /ask and have the server speak the reply."""
+        try:
+            reply = self._post("/ask", {"message": cmd}).get("reply", "")
+            print(f"Jarvis reply: {reply}")
+            if reply:
+                self._post("/speak", {"text": reply[:1000]})
+        except Exception as e:  # keep listening after network/server problems
+            print("Error talking to server:", redact(e))
 
 
-def listen_command() -> str:
+def listen_command(sr) -> str:
     """After wake word, listen for one spoken command."""
     print("Listening for command...")
     recognizer = sr.Recognizer()
@@ -40,7 +59,7 @@ def listen_command() -> str:
         try:
             audio = recognizer.listen(source, timeout=6, phrase_time_limit=6)
         except Exception as e:
-            print("Listen error (command):", e)
+            print("Listen error (command):", redact(e))
             return ""
 
     try:
@@ -49,26 +68,46 @@ def listen_command() -> str:
         print("Heard command:", text)
         return text
     except Exception as e:
-        print("Speech recognition error:", e)
+        print("Speech recognition error:", redact(e))
         return ""
 
 
 # ================== MAIN WAKE WORD LOOP ==================
 
-def main():
-    if not ACCESS_KEY or not ACCESS_KEY.startswith("pv_"):
-        print("ERROR: You must set ACCESS_KEY in wakeword_listener.py (your Picovoice key).")
-        return
+def main() -> int:
+    load_dotenv_if_enabled()
+    try:
+        access_key = require_credential("PICOVOICE_ACCESS_KEY")
+    except MissingCredentialError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    settings = load_settings()
+    token_result = load_api_token(settings)
+    if not token_result.ok:
+        print(f"ERROR: {token_result.problem}", file=sys.stderr)
+        return 2
 
     if not os.path.exists(KEYWORD_PATH):
-        print(f"ERROR: Could not find keyword file: {KEYWORD_PATH}")
-        print("Make sure jarvis.ppn is in the same folder as this script.")
-        return
+        print(f"ERROR: Could not find keyword file: {KEYWORD_PATH}", file=sys.stderr)
+        return 2
 
-    porcupine = pvporcupine.create(
-        access_key=ACCESS_KEY,
-        keyword_paths=[KEYWORD_PATH],
-    )
+    try:
+        import pvporcupine
+        import pyaudio
+        import speech_recognition as sr
+    except ImportError as exc:
+        print(f"ERROR: wake-word dependencies are missing ({exc.name}). Install them with: "
+              "uv sync --extra wakeword", file=sys.stderr)
+        return 2
+
+    client = ServerClient(settings.local_base_url, token_result.token)
+
+    try:
+        porcupine = pvporcupine.create(access_key=access_key, keyword_paths=[KEYWORD_PATH])
+    except Exception as e:
+        print("ERROR: could not start Porcupine:", redact(e, extra_secrets=(access_key,)), file=sys.stderr)
+        return 2
 
     pa = pyaudio.PyAudio()
     audio_stream = pa.open(
@@ -89,9 +128,9 @@ def main():
             keyword_index = porcupine.process(pcm)
             if keyword_index >= 0:
                 print("Wake word detected: JARVIS")
-                command = listen_command()
+                command = listen_command(sr)
                 if command:
-                    send_to_server(command)
+                    client.send_command(command)
                 else:
                     print("No valid command heard.")
     except KeyboardInterrupt:
@@ -101,7 +140,8 @@ def main():
         audio_stream.close()
         pa.terminate()
         porcupine.delete()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
