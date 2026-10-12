@@ -67,8 +67,9 @@ STOP_REASONS = frozenset({
 })
 
 
-# Step label for a tool call the provider rejected as malformed before it reached us.
+# Step labels for model output the provider rejected before any proposed call reached ULTRON.
 MALFORMED_CALL = "(malformed tool call)"
+MALFORMED_OUTPUT = "(malformed model output)"
 
 
 @dataclass(frozen=True)
@@ -396,11 +397,11 @@ class AgentRuntime:
             except ProviderError as err:
                 log.info("agent %s model_call n=%d status=error kind=%s ms=%d", run.handle.run_id, run.model_calls,
                          err.kind, _ms(self._clock() - began))
-                if err.kind == "malformed_call":
-                    # The provider refused a badly generated tool call; nothing ran. Count it
-                    # like any invalid call (bounded by max_invalid_calls and max_steps) and
-                    # let the model try again.
-                    self._reject(run, MALFORMED_CALL, "invalid", err.message)
+                if err.kind in ("malformed_call", "malformed_output"):
+                    # The provider rejected this model turn before returning a usable call. Nothing
+                    # from this failed turn ran. Count it as invalid and retry within both hard limits.
+                    label = MALFORMED_CALL if err.kind == "malformed_call" else MALFORMED_OUTPUT
+                    self._reject(run, label, "invalid", err.message)
                     continue
                 run.error = err.kind
                 run.error_code = err.code
