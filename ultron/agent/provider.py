@@ -30,7 +30,7 @@ Role = Literal["system", "user", "assistant", "tool"]
 # ``malformed_call``: the provider refused to return a tool call the model generated badly
 # (Groq's HTTP 400 ``tool_use_failed``). Nothing ran; the runtime may ask the model again.
 ErrorKind = Literal["not_configured", "timeout", "unavailable", "rate_limited", "rejected", "bad_response",
-                    "malformed_call"]
+                    "malformed_call", "malformed_output"]
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 
@@ -251,12 +251,13 @@ _MESSAGES: dict[ErrorKind, str] = {
     "rejected": "The language model rejected the request (check {model_env} supports tool calling).",
     "bad_response": "The language model returned an unexpected response.",
     "malformed_call": "The language model produced a malformed tool call.",
+    "malformed_output": "The language model produced output the provider could not parse.",
 }
 _QUOTA_MESSAGE = "The {label} account has no remaining quota; check billing and usage limits."
 _TOO_LARGE_MESSAGE = "The request was too large for the language model."
-# Groq HTTP 400 code seen in a real run but not documented by Groq (checked 2026-10-13). Its
-# name is the only evidence, so it keeps kind "rejected" (fails closed, never retried); only the
-# message is specific, instead of the misleading "check the model supports tool calling".
+# Groq HTTP 400 code seen in real runs but not documented by Groq (checked 2026-10-13). Its name
+# suggests provider-side parsing of generated model output. Treat only this exact code as a malformed
+# model turn, bounded by the runtime invalid-call and step limits; arbitrary HTTP 400s remain rejected.
 _OUTPUT_PARSE_MESSAGE = "The {label} service could not parse the language model's output (output_parse_failed)."
 _SAFE_CODE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
@@ -294,6 +295,10 @@ def _map_error(exc: Exception, provider: OpenAIChatProvider | None = None) -> Pr
             # Groq validated the model's tool call and refused it. Its body carries the raw
             # generation (``failed_generation``), which is never read, logged or returned.
             kind = "malformed_call"
+        elif code == "output_parse_failed" and kind == "rejected":
+            # This exact Groq code indicates output parsing failed before a tool call was returned.
+            # The response body is deliberately ignored; runtime retries are bounded like invalid calls.
+            kind = "malformed_output"
     except ImportError:  # pragma: no cover - openai is a core dependency
         kind = "unavailable"
     # Structured and safe: kind, exception type, HTTP status, provider code/param and request id.
@@ -308,7 +313,7 @@ def _map_error(exc: Exception, provider: OpenAIChatProvider | None = None) -> Pr
         message = _QUOTA_MESSAGE
     elif status == 413:
         message = _TOO_LARGE_MESSAGE
-    elif code == "output_parse_failed" and kind == "rejected":
+    elif code == "output_parse_failed" and kind == "malformed_output":
         message = _OUTPUT_PARSE_MESSAGE
     else:
         message = _MESSAGES[kind]
