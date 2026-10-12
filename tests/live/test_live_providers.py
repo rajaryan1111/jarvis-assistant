@@ -1,26 +1,32 @@
-"""M2.1 opt-in live tests: the real OpenAI model through the real agent runtime.
+"""Opt-in live tests: a real model provider through the real agent runtime.
 
-Skipped unless you opt in:
+M2.1 added OpenAI; M2.2 adds Groq. Each provider is opted in separately and everything is
+skipped by default (never in CI):
 
-    ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider
+    ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider    # OPENAI_API_KEY
+    ULTRON_LIVE_GROQ=1   uv run pytest tests/live -p no:cacheprovider    # GROQ_API_KEY
 
-* Uses ``OPENAI_API_KEY`` from your environment or ``.env`` and the configured model
-  (``ULTRON_AGENT_MODEL`` / ``ULTRON_CHAT_MODEL``, default in ultron/config.py).
+* Keys and model settings come from your environment or ``.env`` (captured by
+  tests/conftest.py only when opted in; every other test still runs without credentials).
+  OpenAI uses ``ULTRON_AGENT_MODEL`` / ``ULTRON_CHAT_MODEL``; Groq uses ``ULTRON_GROQ_MODEL``
+  (default ``openai/gpt-oss-120b``) and ``ULTRON_GROQ_REASONING_EFFORT``.
 * Synthetic tools and data only, on an isolated tool registry (real policy and
   confirmation store): nothing on your Mac is touched and none of your notes, reminders,
   files or history is sent. Only the synthetic objectives and synthetic tool results below
-  go to OpenAI.
-* Bounded: at most 5 model turns, 300 output tokens per call and 12k tokens per scenario,
-  and a 60k-token budget for the whole session (about 7 scenarios, roughly 20-40k tokens in
-  practice). With gpt-4.1-mini that is a few US cents at most; check current pricing.
+  go to the provider.
+* Bounded: at most 5 model turns and 12k tokens per scenario, a 60k-token budget per
+  provider session, and 300 output tokens per call for OpenAI (Groq: the configured
+  ULTRON_AGENT_MAX_OUTPUT_TOKENS, default 1024, because reasoning tokens count). A few US
+  cents at most on either provider; check current pricing.
 * Assertions are about observable behaviour (which tools ran, in what order, with which
   arguments, final status and verification), never about exact wording.
-* Prints a summary table (scenario, result, status, tools, tokens, time). It never prints
-  the key, prompts or replies.
+* Prints a summary table per provider (scenario, result, status, tools, tokens, time). It
+  never prints the key, prompts or replies.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import secrets
@@ -29,18 +35,20 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from ultron.agent.provider import OpenAIChatProvider
+from ultron.agent.provider import OpenAIChatProvider, create_provider
 from ultron.agent.runtime import AgentLimits, AgentReport, AgentRuntime, RunRegistry, ToolExecutor
-from ultron.config import OPENAI_CLIENT_TIMEOUT, get_credential, load_agent_config, load_dotenv_if_enabled
+from ultron.config import OPENAI_CLIENT_TIMEOUT, get_credential, load_agent_config
 from ultron.security.policy import Channel, CommandContext, RiskTier
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
 from ultron.tools.registry import ToolRegistry
 
-OPT_IN = os.environ.get("ULTRON_LIVE_OPENAI", "").strip() == "1"
+# provider -> (opt-in flag, credential)
+PROVIDERS = {"openai": ("ULTRON_LIVE_OPENAI", "OPENAI_API_KEY"), "groq": ("ULTRON_LIVE_GROQ", "GROQ_API_KEY")}
+OPTED_IN = {name for name, (flag, _) in PROVIDERS.items() if os.environ.get(flag, "").strip() == "1"}
 pytestmark = [
     pytest.mark.live,
-    pytest.mark.skipif(not OPT_IN, reason="live OpenAI tests are opt-in: set ULTRON_LIVE_OPENAI=1 "
-                                          "(uses OPENAI_API_KEY; a few cents at most)"),
+    pytest.mark.skipif(not OPTED_IN, reason="live provider tests are opt-in: set ULTRON_LIVE_OPENAI=1 "
+                                            "(OPENAI_API_KEY) or ULTRON_LIVE_GROQ=1 (GROQ_API_KEY); a few cents"),
 ]
 
 LIMITS = AgentLimits(max_steps=5, max_tool_calls=5, max_calls_per_tool=3, model_timeout=25, tool_timeout=5,
@@ -62,30 +70,56 @@ REMINDER = {"type": "object", "additionalProperties": False, "required": ["text"
 # ============================================================ session plumbing
 @dataclass
 class Session:
+    name: str
     provider: OpenAIChatProvider
     model: str
+    limits: AgentLimits
+    env: dict
     tokens: int = 0
     rows: list[str] = field(default_factory=list)
 
+    def provider_for(self, *, key: str, model: str) -> OpenAIChatProvider:
+        """Same provider type and endpoint, with another key or model (error scenarios)."""
+        config = dataclasses.replace(load_agent_config({**self.env, "ULTRON_PROVIDER": self.name}), model=model,
+                                     reasoning_effort="" if model != self.model else self.provider_effort)
+        return build_provider(self.name, config, key, self.env)
 
-@pytest.fixture(scope="module")
-def live(request):
-    load_dotenv_if_enabled()
-    key = get_credential("OPENAI_API_KEY")
+    @property
+    def provider_effort(self) -> str:
+        return getattr(self.provider, "reasoning_effort", "")
+
+
+def build_provider(name: str, config, key: str, env: dict) -> OpenAIChatProvider:
+    if name == "groq":
+        provider = create_provider(config, groq_api_key=key)  # always the fixed Groq endpoint
+    else:
+        import openai
+
+        client = openai.OpenAI(api_key=key, base_url=env.get("OPENAI_BASE_URL") or None,
+                               timeout=OPENAI_CLIENT_TIMEOUT, max_retries=0)
+        provider = create_provider(config, openai_client=client)
+    assert provider is not None
+    return provider
+
+
+@pytest.fixture(scope="module", params=sorted(PROVIDERS))
+def live(request, live_env):
+    name = request.param
+    flag, key_name = PROVIDERS[name]
+    if name not in OPTED_IN:
+        pytest.skip(f"{name}: set {flag}=1 to run")
+    key = get_credential(key_name, live_env)
     if not key:
-        pytest.fail("ULTRON_LIVE_OPENAI=1 but OPENAI_API_KEY is not set (environment or .env). Nothing was sent.",
-                    pytrace=False)
-    if os.environ.get("OPENAI_LOG", "").lower() == "debug":
+        pytest.fail(f"{flag}=1 but {key_name} is not set (environment or .env). Nothing was sent.", pytrace=False)
+    if live_env.get("OPENAI_LOG", "").lower() == "debug":
         pytest.fail("Unset OPENAI_LOG=debug for live tests: SDK debug logs include request details.", pytrace=False)
-    import openai
-
-    model = load_agent_config().model
-    client = openai.OpenAI(api_key=key, timeout=OPENAI_CLIENT_TIMEOUT, max_retries=0)
-    session = Session(OpenAIChatProvider(client, model), model)
+    config = load_agent_config({**live_env, "ULTRON_PROVIDER": name})
+    limits = LIMITS if name == "openai" else dataclasses.replace(LIMITS, max_output_tokens=config.max_output_tokens)
+    session = Session(name, build_provider(name, config, key, live_env), config.model, limits, live_env)
     yield session
     reporter = request.config.pluginmanager.get_plugin("terminalreporter")
     if reporter is not None:
-        reporter.write_sep("=", f"live OpenAI summary (model {model}, {session.tokens} tokens total)")
+        reporter.write_sep("=", f"live {name} summary (model {session.model}, {session.tokens} tokens total)")
         for row in session.rows:
             reporter.write_line(row)
 
@@ -102,7 +136,7 @@ def registry_with(*tools: tuple) -> ToolRegistry:
 def run_scenario(live: Session, name: str, registry: ToolRegistry, objective: str) -> AgentReport:
     if live.tokens >= SESSION_TOKEN_BUDGET:
         pytest.skip(f"session token budget ({SESSION_TOKEN_BUDGET}) used up")
-    runtime = AgentRuntime(registry, live.provider, limits=LIMITS, runs=RunRegistry(), executor=ToolExecutor(),
+    runtime = AgentRuntime(registry, live.provider, limits=live.limits, runs=RunRegistry(), executor=ToolExecutor(),
                            allowlist=registry.names())
     started = time.monotonic()
     report = runtime.run(objective, OWNER)
@@ -222,18 +256,16 @@ def test_live_failed_action_is_not_reported_as_success(live):
     check(live, report.error is None, f"provider error: {report.error}")
     check(live, len(calls) >= 1, "the tool was never tried")
     check(live, report.status != "completed" and report.verified is not True, f"reported as {report.status}")
-    check(live, len(calls) <= LIMITS.max_calls_per_tool, "retried beyond the per-tool limit")
+    check(live, len(calls) <= live.limits.max_calls_per_tool, "retried beyond the per-tool limit")
     mark(live, True)
 
 
 def test_live_unknown_model_is_a_clean_rejection(live):
-    import openai
-
-    key = get_credential("OPENAI_API_KEY")
-    provider = OpenAIChatProvider(openai.OpenAI(api_key=key, timeout=15, max_retries=0), "ultron-no-such-model")
+    key = get_credential(PROVIDERS[live.name][1], live.env)
+    provider = live.provider_for(key=key, model="ultron-no-such-model")
     registry = registry_with(("clock.now", RiskTier.OBSERVE, "Returns the time.",
                               lambda a: ToolResult(True, "12:00"), NO_ARGS))
-    report = AgentRuntime(registry, provider, limits=LIMITS, allowlist=registry.names()).run("time?", OWNER)
+    report = AgentRuntime(registry, provider, limits=live.limits, allowlist=registry.names()).run("time?", OWNER)
     live.rows.append(f"  {'errors: unknown model':<34} status={report.status:<17} error={report.error or '-'}")
     check(live, report.status == "failed" and report.error == "rejected" and report.steps == [],
           f"got {report.status}/{report.error}")
@@ -241,12 +273,12 @@ def test_live_unknown_model_is_a_clean_rejection(live):
 
 
 def test_live_bad_key_is_a_clean_auth_error(live):
-    import openai
-
-    bogus = "sk" + "-ultron-live-test-" + "invalid"  # sent to OpenAI on purpose; not a credential
-    provider = OpenAIChatProvider(openai.OpenAI(api_key=bogus, timeout=15, max_retries=0), live.model)
-    report = AgentRuntime(registry_with(), provider, limits=LIMITS, allowlist=()).run("hello", OWNER)
+    # Sent to the provider on purpose; not a credential.
+    bogus = ("gsk" + "_ultron-live-test-" if live.name == "groq" else "sk" + "-ultron-live-test-") + "invalid"
+    provider = live.provider_for(key=bogus, model=live.model)
+    report = AgentRuntime(registry_with(), provider, limits=live.limits, allowlist=()).run("hello", OWNER)
     live.rows.append(f"  {'errors: invalid key':<34} status={report.status:<17} error={report.error or '-'}")
     check(live, report.status == "failed" and report.error == "not_configured", f"got {report.status}/{report.error}")
-    check(live, bogus not in report.reply, "the key was echoed")
+    check(live, bogus not in report.reply and PROVIDERS[live.name][1] in report.reply,
+          "the key was echoed or the hint names the wrong variable")
     mark(live, True)

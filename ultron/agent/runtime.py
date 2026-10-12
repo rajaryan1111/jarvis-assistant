@@ -60,6 +60,10 @@ Status = Literal[
 STATUS_VALUES = frozenset(Status.__args__)  # type: ignore[attr-defined]
 
 
+# Step label for a tool call the provider rejected as malformed before it reached us.
+MALFORMED_CALL = "(malformed tool call)"
+
+
 @dataclass(frozen=True)
 class AgentLimits:
     max_steps: int = 6  # model turns
@@ -319,8 +323,9 @@ class AgentRuntime:
             return AgentReport("failed", f"Please keep requests under {self.limits.max_objective_chars} characters.",
                                run_id="-")
         if self.provider is None:
-            return AgentReport("failed", "My language model is not configured (OPENAI_API_KEY), so I can only "
-                                         "handle the built-in commands.", run_id="-")
+            return AgentReport("failed", "My language model is not configured (run `ultron doctor`: it needs "
+                                         "OPENAI_API_KEY, or GROQ_API_KEY with ULTRON_PROVIDER=groq), so I can "
+                                         "only handle the built-in commands.", run_id="-")
         handle = self.runs.start(ctx.principal)
         if handle is None:
             return AgentReport("failed", "I'm already working on several tasks. Please try again in a moment.",
@@ -335,8 +340,9 @@ class AgentRuntime:
                 messages=[Message("system", SYSTEM_PROMPT.format(max_steps=self.limits.max_steps)),
                           Message("user", objective)],
             )
-            log.info("agent %s start principal=%s channel=%s input=%s tools=%d", handle.run_id, ctx.principal,
-                     ctx.channel.value, ctx.input_mode.value, len(catalog))
+            log.info("agent %s start principal=%s channel=%s input=%s tools=%d provider=%s model=%s", handle.run_id,
+                     ctx.principal, ctx.channel.value, ctx.input_mode.value, len(catalog),
+                     getattr(self.provider, "name", "?"), getattr(self.provider, "model", "?"))
             try:
                 report = self._loop(run)
             except _Stop as stop:
@@ -372,8 +378,17 @@ class AgentRuntime:
             except ProviderError as err:
                 log.info("agent %s model_call n=%d status=error kind=%s ms=%d", run.handle.run_id, run.model_calls,
                          err.kind, _ms(self._clock() - began))
+                if err.kind == "malformed_call":
+                    # The provider refused a badly generated tool call; nothing ran. Count it
+                    # like any invalid call (bounded by max_invalid_calls and max_steps) and
+                    # let the model try again.
+                    self._reject(run, MALFORMED_CALL, "invalid", err.message)
+                    continue
                 run.error = err.kind
-                raise _Stop(self._stopped(run, "failed", err.message.rstrip(".").lower())) from None
+                reason = err.message.rstrip(".")
+                # "The language model ..." reads as "... because the language model ...". Only the
+                # first letter changes, so names such as GROQ_API_KEY stay exact.
+                raise _Stop(self._stopped(run, "failed", reason[:1].lower() + reason[1:])) from None
             run.input_tokens += turn.usage.input_tokens
             run.output_tokens += turn.usage.output_tokens
             log.info("agent %s model_call n=%d status=ok finish=%s tool_calls=%d tokens_in=%d tokens_out=%d ms=%d",
@@ -382,6 +397,10 @@ class AgentRuntime:
             self._check_running(run)
             if not turn.tool_calls:
                 if not turn.text.strip():
+                    if turn.finish_reason == "length":
+                        # Reasoning models can spend the whole output limit before answering.
+                        raise _Stop(self._stopped(run, "failed", "the language model ran out of output tokens "
+                                                                 "before answering (ULTRON_AGENT_MAX_OUTPUT_TOKENS)"))
                     raise _Stop(self._stopped(run, "failed", "the language model returned an empty response"))
                 if turn.finish_reason == "length":
                     # Cut off by the output limit: never present a truncated answer as complete.
@@ -536,7 +555,8 @@ class AgentRuntime:
                 problems.append(f"the cited result {call_id} ({step.tool}) did not succeed")
         for index, step in enumerate(run.steps):
             later_success = any(s.tool == step.tool and s.status == "completed" for s in run.steps[index + 1:])
-            if step.status in ("invalid", "refused") and step.tool not in (FINISH, ASK_USER) and not later_success:
+            if (step.status in ("invalid", "refused") and step.tool not in (FINISH, ASK_USER, MALFORMED_CALL)
+                    and not later_success):
                 # The model tried something that was never run (unknown tool, bad arguments,
                 # refused): a success claim must not rest on it.
                 problems.append(f"{step.tool} was not run")

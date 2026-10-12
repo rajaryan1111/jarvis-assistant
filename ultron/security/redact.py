@@ -22,6 +22,7 @@ _TOKEN_PATTERNS = (
     re.compile(r"\bpv_[A-Za-z0-9+/]{16,}={0,2}"),
     re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"\bgsk_[A-Za-z0-9]{16,}"),  # Groq API keys
 )
 
 _EXTRA_SECRET_ENV = ("ULTRON_API_TOKEN",)

@@ -25,6 +25,7 @@ _PLACEHOLDER_HINTS = (
 RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("picovoice-access-key", re.compile(r"\bpv_[A-Za-z0-9+/]{20,}={0,2}")),
     ("openai-api-key", re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_\-]{20,}")),
+    ("groq-api-key", re.compile(r"\bgsk_[A-Za-z0-9]{20,}")),
     ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,})")),
     ("aws-access-key-id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),

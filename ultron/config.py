@@ -50,6 +50,7 @@ CREDENTIALS: dict[str, CredentialSpec] = {
     spec.name: spec
     for spec in (
         CredentialSpec("OPENAI_API_KEY", "OpenAI", "agent loop, LLM replies, knowledge-base answers and study plans"),
+        CredentialSpec("GROQ_API_KEY", "Groq", "the agent loop when ULTRON_PROVIDER=groq"),
         CredentialSpec("WEATHER_API_KEY", "OpenWeather", "weather reports"),
         CredentialSpec("NEWS_API_KEY", "NewsAPI", "news headlines"),
         CredentialSpec("CRICKET_API_KEY", "CricketData", "live cricket scores"),
@@ -231,6 +232,18 @@ _AGENT_MODEL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV
 OPENAI_CLIENT_TIMEOUT = 30.0
 OPENAI_CLIENT_MAX_RETRIES = 1
 
+# Agent-loop model provider (M2.2): ULTRON_PROVIDER=openai|groq.
+SUPPORTED_PROVIDERS = ("openai", "groq")
+DEFAULT_PROVIDER = "openai"
+PROVIDER_KEYS = {"openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY"}
+# Production on Groq, self-serve pricing, documented tool use (console.groq.com/docs/models and
+# /docs/tool-use, checked 2026-10-13). No parallel tool calls, which the agent never uses.
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+# Per-call output limit. Groq's default model is a reasoning model whose hidden reasoning
+# counts against max_completion_tokens, so it needs more room than OpenAI's 400.
+DEFAULT_MAX_OUTPUT_TOKENS = {"openai": 400, "groq": 1024}
+_PROVIDER_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_-")
+
 
 def _model_name(env: Mapping[str, str], name: str, default: str) -> str:
     import logging
@@ -254,7 +267,13 @@ class AgentConfig:
     """Agent-loop switches and hard limits (docs/M2_0_AGENT_LOOP.md). Values are clamped."""
 
     enabled: bool = True
+    provider: str = DEFAULT_PROVIDER
+    # Non-empty when ULTRON_PROVIDER is not supported: the agent stays off rather than
+    # sending requests (and data) to a provider the owner did not choose.
+    provider_error: str = ""
     model: str = DEFAULT_AGENT_MODEL
+    reasoning_effort: str = ""  # Groq only; "" = do not send
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS[DEFAULT_PROVIDER]
     max_steps: int = 6
     max_tool_calls: int = 8
     model_timeout: float = 20.0
@@ -282,10 +301,28 @@ def load_agent_config(env: Mapping[str, str] | None = None) -> AgentConfig:
             return default
         return cast(min(max(value, low), high))
 
-    model = _model_name(env, "ULTRON_AGENT_MODEL", load_chat_model(env))
+    provider = (env.get("ULTRON_PROVIDER") or "").strip().lower() or DEFAULT_PROVIDER
+    provider_error = ""
+    if provider not in SUPPORTED_PROVIDERS:
+        shown = provider if len(provider) <= 20 and set(provider) <= _PROVIDER_CHARS else "this value"
+        provider_error = (f"ULTRON_PROVIDER={shown!r} is not supported (use one of: {', '.join(SUPPORTED_PROVIDERS)}); "
+                          "the agent loop is off")
+        log.warning("%s", provider_error)
+    reasoning_effort = ""
+    if provider == "groq":
+        # ULTRON_AGENT_MODEL / ULTRON_CHAT_MODEL name OpenAI models; Groq has its own namespace.
+        model = _model_name(env, "ULTRON_GROQ_MODEL", DEFAULT_GROQ_MODEL)
+        reasoning_effort = _groq_reasoning_effort(env, model, log)
+    else:
+        model = _model_name(env, "ULTRON_AGENT_MODEL", load_chat_model(env))
+    output_default = DEFAULT_MAX_OUTPUT_TOKENS.get(provider, defaults.max_output_tokens)
     return AgentConfig(
         enabled=_flag(env, "ULTRON_AGENT", default=True),
+        provider=provider if not provider_error else DEFAULT_PROVIDER,
+        provider_error=provider_error,
         model=model,
+        reasoning_effort=reasoning_effort,
+        max_output_tokens=int(number("ULTRON_AGENT_MAX_OUTPUT_TOKENS", output_default, 64, 4096, int)),
         max_steps=int(number("ULTRON_AGENT_MAX_STEPS", defaults.max_steps, 1, 20, int)),
         max_tool_calls=int(number("ULTRON_AGENT_MAX_TOOL_CALLS", defaults.max_tool_calls, 1, 30, int)),
         model_timeout=number("ULTRON_AGENT_MODEL_TIMEOUT", defaults.model_timeout, 2, 120),
@@ -293,3 +330,31 @@ def load_agent_config(env: Mapping[str, str] | None = None) -> AgentConfig:
         max_duration=number("ULTRON_AGENT_MAX_SECONDS", defaults.max_duration, 5, 600),
         max_concurrent_runs=int(number("ULTRON_AGENT_MAX_CONCURRENT", defaults.max_concurrent_runs, 1, 8, int)),
     )
+
+
+def _groq_reasoning_effort(env: Mapping[str, str], model: str, log) -> str:
+    """``ULTRON_GROQ_REASONING_EFFORT``; default ``low`` for gpt-oss, otherwise not sent
+    (non-reasoning models reject the parameter)."""
+    from ultron.agent.provider import GROQ_REASONING_EFFORTS, groq_model_family
+
+    default = "low" if groq_model_family(model) == "gpt-oss" else ""
+    raw = (env.get("ULTRON_GROQ_REASONING_EFFORT") or "").strip().lower()
+    if not raw:
+        return default
+    if raw not in GROQ_REASONING_EFFORTS:
+        log.warning("ULTRON_GROQ_REASONING_EFFORT must be one of %s; using the default",
+                    ", ".join(sorted(GROQ_REASONING_EFFORTS)))
+        return default
+    return raw
+
+
+def agent_provider_status(config: AgentConfig, env: Mapping[str, str] | None = None) -> tuple[bool, str]:
+    """(usable, one-line reason) for the agent loop's provider. Never includes a key value."""
+    if config.provider_error:
+        return False, config.provider_error
+    if not config.enabled:
+        return False, "the agent loop is off (ULTRON_AGENT=0)"
+    key = PROVIDER_KEYS[config.provider]
+    if get_credential(key, env) is None:
+        return False, f"{key} is not set (needed for ULTRON_PROVIDER={config.provider})"
+    return True, f"provider={config.provider} model={config.model}"

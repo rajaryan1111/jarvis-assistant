@@ -71,6 +71,7 @@ echo "ULTRON_HAND_LANDMARKER_MODEL=$PWD/models/hand_landmarker.task" >> .env
    | Variable | Provider | Used for |
    |---|---|---|
    | `OPENAI_API_KEY` | OpenAI | agent loop, LLM replies, knowledge-base answers, study plans |
+   | `GROQ_API_KEY` | Groq | the agent loop, when `ULTRON_PROVIDER=groq` |
    | `WEATHER_API_KEY` | OpenWeather | weather |
    | `NEWS_API_KEY` | NewsAPI | headlines (sent in the `X-Api-Key` header, never in URLs) |
    | `CRICKET_API_KEY` | CricketData | live scores |
@@ -79,6 +80,11 @@ echo "ULTRON_HAND_LANDMARKER_MODEL=$PWD/models/hand_landmarker.task" >> .env
    Models: `ULTRON_CHAT_MODEL` (default `gpt-4.1-mini`) and `ULTRON_AGENT_MODEL` (defaults to the chat model;
    must support Chat Completions function calling). `uv run ultron doctor` shows both. Without a key,
    everything except the language-model features keeps working.
+
+   **Agent provider:** `ULTRON_PROVIDER=openai` (default) or `groq`. With `groq`, the agent loop uses
+   `GROQ_API_KEY` and `ULTRON_GROQ_MODEL` (default `openai/gpt-oss-120b`). Single-shot chat, study plans and
+   knowledge answers stay on OpenAI. Any other value turns the agent off instead of falling back. See
+   [docs/M2_2_GROQ_PROVIDER.md](docs/M2_2_GROQ_PROVIDER.md).
 
 2. **Local API token (required for the HUD).** This token authorises control of your computer through the
    local server. It is generated locally and stored **outside the repository** in a file only you can read:
@@ -126,7 +132,8 @@ answers. Details: [voice trust model](docs/M1_2_IDENTITY_SESSIONS_VOICE.md#5-voi
 
 ### Multi-step requests (agent loop)
 
-With `OPENAI_API_KEY` set, a request the keyword router does not recognise goes to a small agent loop.
+With a model configured (`OPENAI_API_KEY`, or `ULTRON_PROVIDER=groq` with `GROQ_API_KEY`), a request the
+keyword router does not recognise goes to a small agent loop.
 Start a request with `agent:` to force it. From a terminal: `uv run ultron agent "what time is it and how is
 my battery?" --steps`. The model can only *propose* calls to an allowlisted set of read-only and routine
 tools. Each call goes through the same policy, approval and audit as everything else. A run stops at
@@ -135,7 +142,7 @@ the recorded tool results support it. After reading web, news, weather or Wikipe
 that run needs your approval in the HUD. Settings (`ULTRON_AGENT_*`) and limitations:
 [docs/M2_0_AGENT_LOOP.md](docs/M2_0_AGENT_LOOP.md).
 
-**What goes to OpenAI:** your request text and the results of the tools used in that run. That can include
+**What goes to the model provider (OpenAI or Groq):** your request text and the results of the tools used in that run. That can include
 your notes or reminders if the model lists them, plus weather, news and system status. It never includes
 keys, tokens, cookies, files, screenshots, audio or past conversations. A typical request is 2–4 model calls
 (roughly 4–10k tokens), and every run stops at 30k tokens. Details, costs and troubleshooting:
@@ -201,11 +208,12 @@ uv run python -m ultron check-secrets
 uv run python -m compileall -q -x '/\.venv/' .
 ```
 
-The normal suite never contacts OpenAI. The live tests (`tests/live/`) are skipped unless you opt in.
-They use your key and the real model on synthetic data only, and cost a few cents at most:
+The normal suite never contacts OpenAI or Groq. The live tests (`tests/live/`) are skipped unless you opt in
+per provider. They use your key and the real model on synthetic data only, and cost a few cents at most:
 
 ```bash
-ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider
+ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider   # OPENAI_API_KEY
+ULTRON_LIVE_GROQ=1   uv run pytest tests/live -p no:cacheprovider   # GROQ_API_KEY
 ```
 
 CI runs the normal checks on Python 3.10–3.13 (Ubuntu), never the live tests. The tests use fake command runners and temporary
@@ -231,10 +239,12 @@ See the M1 report for what was verified where.
 | Restart/shutdown confirmed but nothing happens | Grant your terminal Automation permission for System Events (System Settings → Privacy & Security → Automation) |
 | "The assistant proposed this, so it needs your approval" | The task read outside content, or the action needs approval: press CONFIRM in the HUD |
 | "I couldn't verify that this was done" | The model claimed success but the tool results don't show it. Check, then ask again |
-| "rejected the configured credentials" | Wrong or revoked `OPENAI_API_KEY`: fix it in `.env` and restart |
-| "rate limited" / "no remaining quota" | Wait a minute / check billing in the OpenAI dashboard |
-| "The language model is unavailable right now" | No network, proxy/firewall, or an OpenAI outage |
-| "rejected the request (check ULTRON_AGENT_MODEL …)" | The model doesn't exist or can't do tool calls: use a tool-calling chat model |
+| "rejected the configured credentials" | Wrong or revoked key (the message names `OPENAI_API_KEY` or `GROQ_API_KEY`): fix it in `.env` and restart |
+| "rate limited" / "no remaining quota" | Wait a minute / check billing in the OpenAI or Groq console |
+| "The language model is unavailable right now" | No network, proxy/firewall, or a provider outage |
+| "rejected the request (check ULTRON_AGENT_MODEL …)" | The model doesn't exist or can't do tool calls: use a tool-calling chat model (`ULTRON_GROQ_MODEL` on Groq) |
+| "ran out of output tokens before answering" | A reasoning model used the whole limit: raise `ULTRON_AGENT_MAX_OUTPUT_TOKENS` |
+| `doctor`: "ULTRON_PROVIDER='…' is not supported" | Use `openai` or `groq` |
 | A feature says its key is missing | Add it to `.env`. Run `uv run ultron doctor` to see which keys are set |
 
 ## Repository structure
@@ -257,7 +267,7 @@ news.py               NewsAPI integration
 wakeword_listener.py  optional Porcupine wake word
 jarvis_logic.py       thin wrapper around main.handle_command
 tests/                pytest suite
-docs/                 architecture audit, M1/M1.1/M1.2/M2.0/M2.1 reports, credential rotation guide
+docs/                 architecture audit, M1/M1.1/M1.2/M2.0/M2.1/M2.2 reports, credential rotation guide
 ```
 
 ## Limitations

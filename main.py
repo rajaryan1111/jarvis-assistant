@@ -19,7 +19,7 @@ from openai import OpenAI
 import vision  # optional vision utilities; degrade gracefully when OpenCV/MediaPipe are missing
 import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
 import news
-from ultron.agent.provider import OpenAIChatProvider
+from ultron.agent.provider import create_provider
 from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
 from ultron.config import (
     OPENAI_CLIENT_MAX_RETRIES,
@@ -54,6 +54,7 @@ WEATHER_API_KEY = get_credential("WEATHER_API_KEY")
 NEWS_COUNTRY = os.getenv("NEWS_COUNTRY", "in")
 DEFAULT_WEATHER_CITY = os.getenv("WEATHER_CITY", "Delhi")
 CRICKET_API_KEY = get_credential("CRICKET_API_KEY")  # live cricket API key
+GROQ_API_KEY = get_credential("GROQ_API_KEY")  # only used by the agent loop with ULTRON_PROVIDER=groq
 
 CHAT_MODEL = load_chat_model()  # ULTRON_CHAT_MODEL; the agent uses AGENT_CONFIG.model
 client = (OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_CLIENT_TIMEOUT, max_retries=OPENAI_CLIENT_MAX_RETRIES)
@@ -1588,9 +1589,19 @@ AGENT_EXECUTOR = ToolExecutor(max_inflight=AGENT_CONFIG.max_concurrent_runs)
 _AGENT_PREFIX_RE = re.compile(r"^\s*agent\s*[:,]?\s+(?P<objective>\S.*)$", re.IGNORECASE | re.DOTALL)
 
 
+# ULTRON_PROVIDER=groq: one Groq client for the process (explicit Groq base URL, its own key).
+# The single-shot chat helpers (ask_gpt, study planner, knowledge base) keep using `client`.
+_GROQ_PROVIDER = (create_provider(AGENT_CONFIG, groq_api_key=GROQ_API_KEY)
+                  if AGENT_CONFIG.provider == "groq" and not AGENT_CONFIG.provider_error else None)
+
+
 def agent_provider():
-    """The model behind the agent loop, or None when OPENAI_API_KEY is not configured."""
-    return OpenAIChatProvider(client, AGENT_CONFIG.model) if client else None
+    """The model behind the agent loop (ULTRON_PROVIDER), or None when it is not configured."""
+    if AGENT_CONFIG.provider_error:
+        return None
+    if AGENT_CONFIG.provider == "groq":
+        return _GROQ_PROVIDER
+    return create_provider(AGENT_CONFIG, openai_client=client)
 
 
 def agent_available() -> bool:
@@ -1600,7 +1611,7 @@ def agent_available() -> bool:
 def build_agent(provider=None) -> AgentRuntime:
     limits = AgentLimits(max_steps=AGENT_CONFIG.max_steps, max_tool_calls=AGENT_CONFIG.max_tool_calls,
                          model_timeout=AGENT_CONFIG.model_timeout, tool_timeout=AGENT_CONFIG.tool_timeout,
-                         max_duration=AGENT_CONFIG.max_duration)
+                         max_duration=AGENT_CONFIG.max_duration, max_output_tokens=AGENT_CONFIG.max_output_tokens)
     return AgentRuntime(TOOLS, provider if provider is not None else agent_provider(), limits=limits,
                         runs=AGENT_RUNS, executor=AGENT_EXECUTOR)
 
