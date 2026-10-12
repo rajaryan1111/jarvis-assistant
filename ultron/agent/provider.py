@@ -254,6 +254,10 @@ _MESSAGES: dict[ErrorKind, str] = {
 }
 _QUOTA_MESSAGE = "The {label} account has no remaining quota; check billing and usage limits."
 _TOO_LARGE_MESSAGE = "The request was too large for the language model."
+# Groq HTTP 400 code seen in a real run but not documented by Groq (checked 2026-10-13). Its
+# name is the only evidence, so it keeps kind "rejected" (fails closed, never retried); only the
+# message is specific, instead of the misleading "check the model supports tool calling".
+_OUTPUT_PARSE_MESSAGE = "The {label} service could not parse the language model's output (output_parse_failed)."
 _SAFE_CODE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
@@ -304,6 +308,8 @@ def _map_error(exc: Exception, provider: OpenAIChatProvider | None = None) -> Pr
         message = _QUOTA_MESSAGE
     elif status == 413:
         message = _TOO_LARGE_MESSAGE
+    elif code == "output_parse_failed" and kind == "rejected":
+        message = _OUTPUT_PARSE_MESSAGE
     else:
         message = _MESSAGES[kind]
     return ProviderError(kind, message.format(**names), status=status, code=code)

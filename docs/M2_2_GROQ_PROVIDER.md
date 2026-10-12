@@ -4,11 +4,12 @@ M2.2 lets the M2.0 agent loop run on **Groq** as well as OpenAI, chosen by one s
 itself is unchanged: the same runtime, tool registry, central policy, confirmation store, limits,
 cancellation and verification apply to every tool call, whichever provider proposed it.
 
-> **Status of live validation: not done.** No request has reached Groq from the development
-> environment (its network blocks `api.groq.com`), and no `GROQ_API_KEY` was used. Everything below
-> is verified with the real `openai` SDK against a local Groq-shaped stub, plus Groq's published
-> documentation (checked 2026-10-13). Run the opt-in live test (section 7) on your Mac to validate
-> a real Groq response and a real tool call.
+> **Status of live validation: partial, owner's Mac only.** The development environment cannot reach
+> `api.groq.com` and has no `GROQ_API_KEY`, so everything below is verified with the real `openai` SDK
+> against a local Groq-shaped stub, plus Groq's published documentation (checked 2026-10-13). The owner's
+> first real run (`openai/gpt-oss-120b`) passed 5 of 7 live scenarios; section 10 covers the two
+> failures, what was changed and what is still unproven. Those changes have **not** yet been run
+> against real Groq.
 
 ## 1. How to use it
 
@@ -119,6 +120,7 @@ retention policy.
 | 401 `invalid_api_key`, 403 | `not_configured` | "…rejected the configured credentials (check GROQ_API_KEY)" |
 | 429 `rate_limit_exceeded` (requests or tokens per minute/day) | `rate_limited` | "…rate limited right now; try again in a minute" |
 | 400 `tool_use_failed` | `malformed_call` | Retried as above. After 3: "…kept proposing invalid tool calls" |
+| 400 `output_parse_failed` (seen in a real run; **not documented by Groq**) | `rejected` | "The Groq service could not parse the language model's output (output_parse_failed)". Not retried: see section 10 |
 | 400 (other), 404 `model_not_found`, 422 | `rejected` | "…rejected the request (check ULTRON_GROQ_MODEL supports tool calling)" |
 | 413 | `rejected` | "The request was too large for the language model" |
 | 498 (flex capacity), 500, 502, 503, network errors | `unavailable` | "…unavailable right now" |
@@ -129,7 +131,8 @@ The log line for a provider error contains only the kind, exception type, HTTP s
 code, `param` and request id. It never includes the message or body, which can echo request details or
 part of a key. The user-facing text names the variable to check and is fixed text, never provider
 text. There are no automatic retries (`max_retries=0`), except the bounded model re-ask after
-`tool_use_failed`.
+`tool_use_failed`. The run's `end` log line repeats the error kind and code next to a content-free
+`stop=` reason (section 10).
 
 ## 6. Security parity
 
@@ -155,7 +158,7 @@ Credential hygiene added in M2.2:
 
 ## 7. Tests
 
-**Mocked (no key, no network, run in CI)**: `tests/test_groq_provider.py`, 65 tests:
+**Mocked (no key, no network, run in CI)**: `tests/test_groq_provider.py`, 79 tests:
 
 - **Provider selection and config:** defaults; Groq selection; its own model variable; reasoning-effort
   validation; output-limit clamping; unknown provider turns the agent off (no fallback); missing or
@@ -176,6 +179,11 @@ Credential hygiene added in M2.2:
   in output.
 - **Secrets:** redaction by shape and by value, the scanner rule, test-session scrubbing, and live
   credential capture only when opted in.
+- **Fixes from the first real run (section 10):** `output_parse_failed` fails closed (one request, no
+  tool runs, no retry, nothing from the body leaks); other 400s and 429s are still not retried; every
+  way a run can end has its own stop reason (9 endings checked, including asking, answering without
+  tools, invalid and malformed calls, output limit and empty response); the prompt's lookup-before-asking
+  rule; asking is still required when no tool can supply the detail.
 
 **Live (opt-in, your key, never in CI)**: `tests/live/test_live_providers.py` runs the same 7
 real-model scenarios as M2.1 against Groq:
@@ -196,9 +204,13 @@ ULTRON_LIVE_GROQ=1 uv run pytest tests/live -p no:cacheprovider -v
 - Opting in without a key **fails** with "GROQ_API_KEY is not set … Nothing was sent".
 - Bounds: 5 turns, 12k tokens per scenario, 60k tokens per session, synthetic tools and data only. With
   gpt-oss-120b pricing that is under 4 US cents even if every token were output. Check current pricing.
-- It prints a `live groq summary` table (status, tools, tokens, time) with no key, prompts or replies.
+- It prints a `live groq summary` table: status, stop reason, error kind and code, model calls, ordered
+  `tool:status` steps, tokens in and out, and time. Failure messages carry the same line. No key,
+  prompts, replies, tool arguments or error bodies.
 - Assertions check behaviour (which tools ran, order, arguments, status, verification), not wording.
-- Free-tier rate limits are low. If a scenario fails with `error=rate_limited`, wait a minute and re-run.
+- Free-tier rate limits are low. A 429 is labelled `RATE-LIMITED` in the summary and in the failure
+  message: the test still fails (it proved nothing), but it is not a functional result. Nothing is
+  retried. Wait a minute and re-run, or set `ULTRON_LIVE_PAUSE_SECONDS=20` (0–60) to space the scenarios.
 
 ### Fixed in M2.2: the M2.1 live test could never find a key
 
@@ -222,15 +234,98 @@ test in the same session still runs without credentials (tested, and mutation-ch
 | "…rate limited right now" | Requests- or tokens-per-minute limit (free-tier limits are low). Wait, or reduce usage |
 | "ran out of output tokens before answering" | Reasoning used the whole limit. Raise `ULTRON_AGENT_MAX_OUTPUT_TOKENS` (e.g. 2048) or set `ULTRON_GROQ_REASONING_EFFORT=low` |
 | "kept proposing invalid tool calls" | The model repeatedly wrote broken tool calls (`tool_use_failed`). Retry, or try another model |
+| "…could not parse the language model's output (output_parse_failed)" | Groq could not parse what the model generated (undocumented code, section 10). Nothing ran. Retry the request; if it keeps happening, note the scenario and request id from the log |
 | Single-shot chat says the OpenAI key is missing | Expected with only a Groq key: only the agent loop uses Groq (section 2) |
 
 ## 9. Limitations
 
-- **No live Groq validation yet** (see the status note at the top). The stub reproduces Groq's documented
-  request and response shapes and error bodies, not the live service or real model judgement.
+- **Live Groq validation is partial** (see the status note at the top and section 10). The stub reproduces
+  Groq's documented request and response shapes and error bodies, not the live service or real model
+  judgement.
 - **Unconfirmed against live Groq:** that it accepts `parallel_tool_calls: false` together with
   `include_reasoning: false` for gpt-oss. Groq's API reference lists both fields as supported. The
   live smoke test is the check.
 - Model availability and pricing change. The default was picked from Groq's docs on 2026-10-13.
 - Only the agent loop uses Groq. Single-shot chat, study plans and knowledge answers remain OpenAI-only.
 - Linux CI cannot verify macOS behaviour. Nothing in this milestone is macOS-specific.
+
+## 10. First real Groq run, and the fixes that followed
+
+The owner ran `ULTRON_LIVE_GROQ=1 uv run pytest tests/live` on macOS with `openai/gpt-oss-120b`:
+**5 passed, 2 failed** (7 OpenAI scenarios skipped). `doctor` recognised `GROQ_API_KEY` and the model.
+A separate `ultron agent` command called `time.now` and then got HTTP 429 `rate_limit_exceeded`.
+
+### Failure 1: multi-step "expected calendar before reminder, got []"
+
+- **Evidence:** the check that `report.error is None` runs first and passed, so the run ended **without a
+  provider error**. That rules out 429, `output_parse_failed` and other HTTP errors. `[]` lists only
+  *completed* tools, so nothing completed. The old summary showed neither the stop reason nor the
+  invalid/malformed steps, so the cause could not be told apart from:
+  - the model asking a question (`ask_user` ends the run and records no step);
+  - a plain answer without tools;
+  - three invalid or malformed tool calls in a row;
+  - reasoning exhausting the output limit;
+  - an empty response.
+- **Likely cause (not proven):** prompt rule 4 told the model to call `ask_user` when "what time" was
+  missing. It never said to look it up with a provided read-only tool first. The objective ("30 minutes
+  before my dentist appointment") gives no clock time, so asking was a reasonable reading of the rule.
+  Replaying exactly that behaviour through the live harness offline (stub model calls `ask_user`)
+  reproduces the reported message ("expected calendar before reminder, got []"). Other endings would also print `got []`,
+  so this is consistent with the report, not proof.
+- **Changes:**
+  1. Rule 4 now says: first check whether a provided read-only tool can look the information up
+     (tool descriptions are marked "read-only"), and only if none can, ask. No tool, schema, policy,
+     approval or limit changed. The ambiguity scenario ("Set a reminder." with only `reminders.add`)
+     still requires asking, and a deterministic test pins that asking ends the run with nothing executed.
+  2. Every report now has a content-free `stop_reason`, and the `end` log line and live summary show it.
+     A repeat failure will therefore say exactly why it happened.
+- **Scenario and assertions unchanged:** the task (read the calendar, set a reminder 30 minutes earlier,
+  verify it) is realistic and valid. Its assertions on order, exact time, status and verification are
+  unchanged.
+
+| `stop` | Meaning |
+|---|---|
+| `finish_tool` | The model called `finish` (statuses `completed`, `incomplete` or `answered`) |
+| `text_answer` / `answer_truncated` | Plain text answer / cut short by the output limit |
+| `asked_user` | The model asked a question (`needs_input`) |
+| `awaiting_approval` / `denied` | A tool call is waiting for HUD approval / was denied |
+| `provider_error` | A provider error ended the run (`error=` kind and code) |
+| `invalid_calls` | 3 invalid or malformed tool calls in a row (see `tools=[…]`) |
+| `output_limit_no_answer` / `empty_response` | Reasoning used the whole output limit / an empty reply |
+| `step_limit`, `time_limit`, `token_budget`, `context_limit`, `tool_call_limit`, `per_tool_limit`, `duplicate_calls` | A limit was reached |
+| `cancelled` / `internal_error` | Stopped by the user / an internal error |
+
+### Failure 2: failed-action scenario, HTTP 400 `output_parse_failed`
+
+- **Documentation check (2026-10-13):** `output_parse_failed` is **not documented** in Groq's errors
+  page, API reference, tool-use guides or reasoning guide, and a web search found no Groq source. Groq
+  documents only `tool_use_failed` as "the model failed to generate a valid tool call" (with a
+  `failed_generation` field), for which it recommends a bounded retry.
+- **Decision:** the code's name suggests the same kind of model-output failure, but that is an inference,
+  not documented semantics. So it is **not** treated as retryable. It stays `rejected`: the run fails
+  closed after one request, nothing executes, and nothing is reported as success. Only its message
+  changed. The generic "check ULTRON_GROQ_MODEL supports tool calling" was misleading, since the same
+  model completed tool calls in the other scenarios. Groq's body, including any `failed_generation`, is
+  never read, logged or shown. Arbitrary 400s are still never retried.
+- **Consequence:** if Groq returns this code again, the failed-action scenario will fail again, now labelled
+  `error=rejected(output_parse_failed)`. That is an honest result, not a code bug to hide. If Groq
+  documents the code as a model-generation failure, it can be added next to `tool_use_failed` (bounded
+  by the same 3-invalid-calls and step limits) with a one-line change and the existing tests.
+- **Not investigated further:** Groq's docs show `name` on tool-result messages; ULTRON sends only
+  `tool_call_id`, which is the OpenAI format. Full tool round trips passed in the real smoke and
+  injection scenarios, so this is not a known cause.
+
+### Rate limits (HTTP 429)
+
+The 429 was in a separate command, not in the live tests. Handling is unchanged: `rate_limited`,
+no retries, with fixed text. The live summary now labels such rows `RATE-LIMITED`, and
+`ULTRON_LIVE_PAUSE_SECONDS` can space scenarios on low tokens-per-minute plans.
+
+### Re-running the two scenarios on your Mac
+
+```bash
+ULTRON_LIVE_GROQ=1 uv run pytest "tests/live/test_live_providers.py::test_live_multi_step_tool_output_drives_the_next_action[groq]" -p no:cacheprovider -v -s
+ULTRON_LIVE_GROQ=1 uv run pytest "tests/live/test_live_providers.py::test_live_failed_action_is_not_reported_as_success[groq]" -p no:cacheprovider -v -s
+```
+
+Each prints one summary row. Its `stop=`, `error=` and `tools=[…]` fields show what happened.

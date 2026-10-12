@@ -114,16 +114,24 @@ ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider
   troubleshooting table. Fixed in M2.2, which also added `ULTRON_LIVE_GROQ=1` for Groq.)
 - If you opt in without a key, it **fails** with a clear message, and nothing is sent.
 - It refuses to run with `OPENAI_LOG=debug`, because SDK debug logs include request details.
-- At the end it prints a summary with no secrets and no conversation text, for example:
+- At the end it prints a summary with no secrets and no conversation text. Each row (and each failure
+  message) shows the final status, why the run ended (`stop`, see the
+  [M2.2 doc](M2_2_GROQ_PROVIDER.md#10-first-real-groq-run-and-the-fixes-that-followed)), the provider
+  error kind and code, model calls, the ordered `tool:status` steps (including invalid and malformed
+  ones), tokens in and out, and time. Never the key, prompts, replies, tool arguments or error bodies:
 
 ```text
-=================== live OpenAI summary (model gpt-4.1-mini, 14210 tokens total) ===================
-PASS  smoke: read-only tool              status=completed  verified=True  calls=2 tokens=2010 ms=1840 error=- tools=[clock.now:completed]
-PASS  multi-step: calendar -> reminder   status=completed  verified=True  calls=3 tokens=3480 ...
+=================== live openai summary (model gpt-4.1-mini, 14210 tokens total) ===================
+PASS  smoke: read-only tool              status=completed stop=finish_tool error=- verified=True calls=2 tokens_in=1890 tokens_out=120 ms=1840 tools=[clock.now:completed]
+FAIL  multi-step: calendar -> reminder   status=needs_input stop=asked_user error=- verified=None calls=1 tokens_in=1650 tokens_out=40 ms=900 tools=[-]
+RATE-LIMITED  honesty: failed action     status=failed stop=provider_error error=rate_limited(rate_limit_exceeded) ...
 ...
 ```
 
-(This example shows the format only; it is not output from a real run.)
+(This example shows the format only; it is not output from a real run.) `RATE-LIMITED` rows are HTTP 429:
+the test still fails, because it proved nothing, but it is not a functional result. Nothing is retried.
+On a low tokens-per-minute plan, set `ULTRON_LIVE_PAUSE_SECONDS` (0–60, default 0) to wait between
+scenarios.
 
 | Live scenario | Real model must… | Asserted (observable only) |
 |---|---|---|
@@ -227,10 +235,12 @@ agent r_3f2a model_call n=1 status=ok finish=tool_calls tool_calls=1 tokens_in=1
 agent r_3f2a tool_call tool=weather.current risk=OBSERVE escalated=False state=done status=completed ms=412
 agent r_3f2a model_call n=2 status=error kind=rate_limited ms=210
 model provider error kind=rate_limited type=RateLimitError http=429 code=rate_limit_exceeded param=- request_id=req_…
-agent r_3f2a end status=failed verified=False steps=1 model_calls=2 tokens_in=1712 tokens_out=18 ms=1580 error=rate_limited
+agent r_3f2a end status=failed stop=provider_error verified=False steps=1 model_calls=2 tokens_in=1712 tokens_out=18 ms=1580 error=rate_limited code=rate_limit_exceeded
 ```
 
-The `/ask` response carries the same data in `agent.usage`, `agent.duration_ms` and `agent.error`. The tests
+The `/ask` response carries the usage, duration and error kind in `agent.usage`, `agent.duration_ms` and
+`agent.error`. The stop reason and provider error code are on the `end` log line and in the live-test
+summary only. The tests
 check that the key, the bearer header, the objective and tool-output text never appear in these logs.
 
 ## 9. Troubleshooting

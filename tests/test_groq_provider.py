@@ -35,7 +35,15 @@ from ultron.agent.provider import (
     create_provider,
     groq_model_family,
 )
-from ultron.agent.runtime import MALFORMED_CALL, AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
+from ultron.agent.runtime import (
+    MALFORMED_CALL,
+    STOP_REASONS,
+    SYSTEM_PROMPT,
+    AgentLimits,
+    AgentRuntime,
+    RunRegistry,
+    ToolExecutor,
+)
 from ultron.api.app import create_app
 from ultron.config import (
     DEFAULT_GROQ_MODEL,
@@ -576,3 +584,99 @@ def test_live_credentials_are_captured_only_when_opted_in(tmp_path):
     assert captured["GROQ_API_KEY"] == FAKE_GROQ_KEY and captured["ULTRON_GROQ_MODEL"] == "from-shell"
     assert capture_live_env({"ULTRON_LIVE_GROQ": "0"}, dotenv) == {}
     assert capture_live_env({"ULTRON_LIVE_OPENAI": "1"}, tmp_path / "missing.env") == {"ULTRON_LIVE_OPENAI": "1"}
+
+
+# ============================================================ 9. fixes from the first real Groq run
+# A real macOS run returned HTTP 400 ``output_parse_failed`` (not documented by Groq; checked
+# 2026-10-13) and a multi-step run that ended with no error and no completed tool, which the
+# summary could not explain. These pin the fail-closed handling and the content-free diagnostics.
+def output_parse_failed():
+    return 400, {"error": {"message": "BODY-OPF output could not be parsed", "type": "invalid_request_error",
+                           "code": "output_parse_failed", "failed_generation": FAILED_GENERATION}}
+
+
+def test_output_parse_failed_fails_closed_without_retrying_or_running_anything(legacy, stub, caplog):
+    ran = []
+    register(legacy, "demo.light", RiskTier.ROUTINE, lambda a: ran.append(a) or ToolResult(True, "on"))
+    stub.script(output_parse_failed(), groq_completion(tool_calls=[(
+        "call_g1", model_name("demo.light"), "{}")]), groq_completion("never fetched"))
+    with caplog.at_level(logging.DEBUG):
+        report = runtime(legacy, groq(stub), ["demo.light"]).run("turn on the lamp", owner_hud())
+    assert ran == [] and len(stub.requests) == 1  # undocumented: not treated as retryable
+    assert (report.status, report.error, report.error_code) == ("failed", "rejected", "output_parse_failed")
+    assert report.stop_reason == "provider_error" and report.verified is False and report.steps == []
+    # Says what happened instead of the misleading "check the model supports tool calling".
+    assert "could not parse the language model's output" in report.reply and "supports tool" not in report.reply
+    for text in (report.reply, caplog.text, repr(report)):
+        assert "PRIVATE-NOTE-4410" not in text and "failed_generation" not in text and "BODY-OPF" not in text
+    end = [r.getMessage() for r in caplog.records if " end status=" in r.getMessage()]
+    assert len(end) == 1 and "stop=provider_error" in end[0] and "error=rejected code=output_parse_failed" in end[0]
+
+
+def test_other_http_400s_keep_the_generic_rejection_and_are_not_retried(stub):
+    stub.script(error(400, "invalid_request_error", "BODY-400 something else"), groq_completion("never fetched"))
+    with pytest.raises(ProviderError) as err:
+        ask(groq(stub))
+    assert err.value.kind == "rejected" and "ULTRON_GROQ_MODEL" in err.value.message and len(stub.requests) == 1
+
+
+def test_rate_limiting_mid_run_is_labelled_and_never_retried(legacy, stub):
+    register(legacy, "demo.lookup", RiskTier.OBSERVE, lambda a: ToolResult(True, "found"))
+    stub.script(groq_completion(tool_calls=[("call_g1", model_name("demo.lookup"), "{}")]),
+                error(429, "rate_limit_exceeded", "Rate limit reached", type_="tokens"),
+                groq_completion("never fetched"))
+    report = runtime(legacy, groq(stub), ["demo.lookup"]).run("look it up", owner_hud())
+    assert (report.error, report.error_code, report.stop_reason) == ("rate_limited", "rate_limit_exceeded",
+                                                                     "provider_error")
+    assert len(stub.requests) == 2 and [(s.tool, s.status) for s in report.steps] == [("demo.lookup", "completed")]
+
+
+def ask_user_call(call_id="call_g1"):
+    return (call_id, "ask_user", json.dumps({"question": "SECRET-QUESTION-5521 at what time?"}))
+
+
+@pytest.mark.parametrize(("replies", "status", "stop", "steps"), [
+    ([groq_completion("Hello.")], "answered", "text_answer", []),
+    ([groq_completion("The answer is", finish_reason="length")], "incomplete", "answer_truncated", []),
+    ([groq_completion(tool_calls=[ask_user_call()])], "needs_input", "asked_user", []),
+    ([groq_completion("", finish_reason="length", usage=(300, 1024))], "failed", "output_limit_no_answer", []),
+    ([groq_completion("")], "failed", "empty_response", []),
+    ([tool_use_failed()] * 3, "failed", "invalid_calls", [(MALFORMED_CALL, "invalid")] * 3),
+    ([groq_completion(tool_calls=[(f"call_g{i}", "no__such_tool", "{}")]) for i in range(3)],
+     "failed", "invalid_calls", [("no__such_tool", "invalid")] * 3),
+    ([groq_completion(tool_calls=[("call_g1", model_name("demo.lookup"), "{}")]),
+      groq_completion(tool_calls=[finish_call("call_g2", "Done.")])], "completed", "finish_tool",
+     [("demo.lookup", "completed")]),
+    ([groq_completion(tool_calls=[("call_g1", model_name("demo.lookup"), "{}")])] * 2, "limit_reached", "step_limit",
+     [("demo.lookup", "completed"), ("demo.lookup", "duplicate")]),
+])
+def test_every_run_ending_has_a_content_free_stop_reason(legacy, stub, caplog, replies, status, stop, steps):
+    """Runs that end with no provider error and no completed tool are no longer indistinguishable."""
+    register(legacy, "demo.lookup", RiskTier.OBSERVE, lambda a: ToolResult(True, "found"))
+    stub.script(*replies)
+    with caplog.at_level(logging.INFO, logger="ultron.agent"):
+        report = runtime(legacy, groq(stub), ["demo.lookup"], max_steps=len(replies)).run("do it", owner_hud())
+    assert (report.status, report.stop_reason, report.error, report.error_code) == (status, stop, None, None)
+    assert [(s.tool, s.status) for s in report.steps] == steps
+    assert report.stop_reason in STOP_REASONS and f"stop={stop}" in caplog.text
+    assert "SECRET-QUESTION-5521" not in caplog.text  # the end line never carries the reply
+
+
+def test_the_prompt_looks_information_up_before_asking_for_it():
+    """The first real Groq multi-step run ended with nothing executed and no error. The prompt
+    then told the model to ask_user when "what time" was missing, without saying to look it up
+    with a provided read-only tool first. (Likely cause, not proven: see docs/M2_2_GROQ_PROVIDER.md.)"""
+    rule = next(line for line in SYSTEM_PROMPT.split("\n") if line.startswith("4."))
+    assert "read-only tool can look it up" in rule and "Only if no provided tool can supply it" in rule
+    assert "ask_user" in rule  # asking is still the answer when nothing can supply it
+
+
+def test_asking_is_still_required_when_no_tool_can_supply_the_missing_detail(legacy, stub):
+    """The prompt change does not let a run act on a guess: an ask_user ends the run, nothing runs."""
+    added = []
+    register(legacy, "demo.remind", RiskTier.ROUTINE, lambda a: added.append(a) or ToolResult(True, "set"),
+             QUERY_ARGS)
+    stub.script(groq_completion(tool_calls=[ask_user_call()]), groq_completion("never fetched"))
+    report = runtime(legacy, groq(stub), ["demo.remind"]).run("Set a reminder.", owner_hud())
+    assert (report.status, report.stop_reason) == ("needs_input", "asked_user") and added == []
+    assert len(stub.requests) == 1
