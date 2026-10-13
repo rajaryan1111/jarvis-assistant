@@ -365,3 +365,10 @@ Keep the voice pipeline modular rather than adopting an external desktop applica
 - Voice cloning requires explicit opt-in and permission for the source voice. Store reference audio only with explicit consent, provide deletion controls, and do not imitate a real person to deceive others.
 - HyperFrames (https://github.com/heygen-com/hyperframes) is a separate optional media-generation workflow for project demos, not a dependency of the voice runtime.
 - Mark every adapter planned, prototype, verified, or unavailable. A repository review or successful import is not proof of end-to-end integration.
+
+
+## 15. Engineering workflow (development-time, not runtime architecture)
+
+Repository changes use a repeatable development loop: inspect current branch and working tree; identify existing behavior and acceptance criteria; plan exact files/interfaces/tests for non-trivial work; implement through a verified test-first cycle; review the resulting diff; and report fresh evidence. Bugs require root-cause investigation and a reproducible failing test where feasible. Independent tasks may be isolated in separate branches/worktrees; shared files and coupled changes stay together.
+
+This workflow does not create a second runtime policy system. Runtime authorization remains in the existing security policy and tool registry. Development instructions are documented in [AGENTS.md](AGENTS.md) and [docs/development-workflow.md](docs/development-workflow.md). External Superpowers skills may inspire the process but are not runtime dependencies.
