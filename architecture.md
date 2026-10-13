@@ -62,7 +62,7 @@ test results, generated artifacts, approved persistent memory.
 Local configuration and data are separate from source control.
 ```
 
-The task/session coordinator and unified artifact workspace are target architecture proposals. Do not assume they are already implemented as one component. Current legacy routing and single-shot chat remain distinct from the custom agent loop.
+The task/session coordinator and unified artifact workspace are target architecture proposals. Do not assume they are already implemented as one component. Current legacy routing and single-shot chat remain distinct from the custom agent loop. The student-life modules below are also proposed workflows until implemented and tested.
 
 ## 3. Existing components and responsibilities
 
@@ -241,3 +241,50 @@ macOS microphone
 3. Build a trilingual evaluation set with the owner's consent; include Hindi, English, Hinglish, Romanized Hindi, Devanagari, technical names, and noisy-room examples.
 4. Define one RequestContext language preference that survives voice-to-agent-to-speech flow and can be overridden by the user.
 5. Test the packaged app on a clean macOS account, not only a developer checkout.
+
+## 12. Student-life companion architecture (target proposal)
+
+This expands the task layer into bounded, user-controlled workspaces. It is a proposed architecture; it does not assert that the current code already implements these services.
+
+### 12.1 Context/workspace model
+
+A task belongs to a workspace type such as course, project, hackathon, career, research, life-admin, or private reflection. Suggested records:
+
+- **Workspace:** ID, type, user-visible name, approved members (if collaboration is later supported), retention policy and references to source folders.
+- **Task:** goal, due date if supplied, priority, estimate, state, owner, dependencies, next action and cancellation state.
+- **Artifact/evidence:** file or URL, provenance, generated/modified status, test or measurement evidence and verification level.
+- **Decision:** question, options considered, user decision, timestamp and rationale when the user elects to save it.
+- **Reminder:** user-approved message, schedule, timezone, enabled/disabled state and cancellation.
+- **Memory item:** explicit user-approved preference or project fact, source/provenance, scope, retention and deletion status.
+
+Personal reflection, relationship conversations and well-being notes must be separate from course/team workspaces by default. Do not copy private conversation text into project memory automatically.
+
+### 12.2 Domain workflows
+
+- **Study:** ingest approved notes/questions, preserve source/page references, map syllabus topics, create a study plan and practice loop.
+- **Hackathon:** capture challenge, deadline, budget, team skills, constraints, MVP, owners, dependencies, blockers, demo path and evidence. Team collaboration requires explicit sharing and access control.
+- **CSE/ECE projects:** inspect repository/configuration and relevant circuit/datasheet files; propose a small change; run available checks; record whether the evidence is static analysis, unit/integration test, simulation or physical measurement.
+- **Career:** user-selected role goals, skill evidence, gap plan, resume drafts, interview sessions and an opportunity tracker. No fabricated achievements or guaranteed outcomes.
+- **Personal support:** allow modes such as listen, reflect, plan, or draft a message. Keep the content in a private workspace and avoid unsolicited diagnosis or emotional-state inference.
+- **Life admin:** user-approved reminders, calendars and budgets with clear data sources, timezones, assumptions and cancellation.
+- **Research:** source registry, claim/source links, literature matrix, dataset provenance, environment/parameters and experiment evidence.
+
+### 12.3 Cross-cutting services
+
+- **Language policy:** carry detected language/script and user preference in RequestContext; support Hindi, English, Hinglish, Romanized Hindi and Devanagari across input, reasoning context and speech/text output.
+- **Planning:** deterministic task records and explicit checkpoints; avoid turning a life conversation into an action plan unless requested.
+- **Memory/retrieval:** scope retrieval to the active workspace; distinguish user-approved memory from untrusted documents and transient chat.
+- **Notifications:** only user-configured reminders; make schedules visible, editable and cancellable.
+- **Evidence ledger:** record what was actually read, changed, tested, measured or sent. A generated explanation is not proof of an external result.
+- **Authorization:** every consequential action still passes through the central ToolRegistry and risk policy; the UI and model cannot grant themselves permission.
+- **Privacy controls:** inspect/export/delete by workspace, mute voice, disable optional check-ins, and clear transient data.
+
+### 12.4 Student safety and trust boundaries
+
+Personal support is not a separate privileged agent. It uses the same access controls but stricter data minimization. No automatic sentiment labels or permanent mood histories. No emotional manipulation, exclusivity claims, stalking/surveillance assistance, or inference of another person's hidden feelings. For persistent/severe distress, provide supportive guidance toward trusted people or professional resources; do not diagnose.
+
+Budget tools must show assumptions and arithmetic and never purchase or transfer money without explicit authorization. Academic and research tools preserve citations, source fidelity, and actual experiment status. ECE/hardware workflows explicitly label simulation versus physical verification.
+
+### 12.5 Architecture rollout
+
+Begin with local, inspectable task/workspace records and user-approved memory; then add study and project workflows; next reminders and opportunity tracking; then optional private support modes. Do not introduce calendars, email, finance, health, or social integrations until their permissions, retention, cancellation and failure behavior are defined and tested.
