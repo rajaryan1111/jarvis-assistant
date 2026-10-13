@@ -367,7 +367,7 @@ Keep the voice pipeline modular rather than adopting an external desktop applica
 - Mark every adapter planned, prototype, verified, or unavailable. A repository review or successful import is not proof of end-to-end integration.
 
 
-## 15. Engineering workflow (development-time, not runtime architecture)
+## 16. Engineering workflow (development-time, not runtime architecture)
 
 Repository changes use a repeatable development loop: inspect current branch and working tree; identify existing behavior and acceptance criteria; plan exact files/interfaces/tests for non-trivial work; implement through a verified test-first cycle; review the resulting diff; and report fresh evidence. Bugs require root-cause investigation and a reproducible failing test where feasible. Independent tasks may be isolated in separate branches/worktrees; shared files and coupled changes stay together.
 
