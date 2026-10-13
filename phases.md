@@ -22,7 +22,7 @@ Exit criteria:
 Work: review malformed-output recovery; bound retries; preserve successful evidence; prevent duplicate actions; verify status against the ledger; improve content-minimizing diagnostics; validate external source responses (`weather`, `news`, `cricket`, `youtube`, `web.search` with verified URLs, and `wiki.summary`).
 
 Current verification status (2026-10-13):
-- Deterministic implementation and regression tests are complete in the repository (`779 passed, 14 skipped` across `tests/`; `ruff check`, `compileall`, and `python -m ultron check-secrets` pass).
+- Deterministic implementation and regression tests are complete in the repository (`781 passed, 14 skipped` across `tests/`; `ruff check`, `compileall`, and `python -m ultron check-secrets` pass).
 - Live provider validation against real OpenAI/Groq APIs remains opt-in (`ULTRON_LIVE_OPENAI=1` / `ULTRON_LIVE_GROQ=1`) and must be re-run on the owner's Mac.
 
 Exit criteria: regression tests cover malformed output, provider errors after completed tools, repeated invalid calls, limits, and false-success prevention. Deterministic suite, lint, compile, and secret scan pass. Live provider results are reported separately. PRs remain unmerged until approved validation criteria are met.
