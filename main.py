@@ -319,15 +319,25 @@ def _weather_report(city: str) -> ToolResult:
     if not WEATHER_API_KEY:
         return ToolResult(False, "Weather API key is not configured.")
     try:
-        data = requests.get(
+        response = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
             params={"q": city, "appid": WEATHER_API_KEY, "units": "metric"},
             timeout=5,
-        ).json()
-        if data.get("cod") != 200:
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or data.get("cod") != 200:
             return ToolResult(False, f"Weather error for {city}.")
-        temp = int(data["main"]["temp"])
-        desc = data["weather"][0]["description"]
+        main_data = data.get("main")
+        conditions = data.get("weather")
+        if not isinstance(main_data, dict) or not isinstance(conditions, list) or not conditions:
+            return ToolResult(False, f"Weather data for {city} was incomplete.")
+        raw_temp = main_data.get("temp")
+        desc = conditions[0].get("description") if isinstance(conditions[0], dict) else None
+        if isinstance(raw_temp, bool) or not isinstance(raw_temp, (int, float)) or not isinstance(desc, str) or not desc.strip():
+            return ToolResult(False, f"Weather data for {city} was incomplete.")
+        temp = int(raw_temp)
+        desc = desc.strip()
         return ToolResult(True, f"The weather in {city} is {desc}, {temp}°C.",
                           {"city": city, "temperature_c": temp, "description": desc})
     except Exception as e:
