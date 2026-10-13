@@ -264,3 +264,16 @@ The voice settings surface should make engine choices and data flow understandab
 - A future demo-video workflow using HyperFrames belongs in project artifacts, not voice settings; it is optional and requires a separate user-requested task.
 
 These are proposed UX requirements. They are not evidence that the current HUD already exposes these controls.
+
+
+## 15. Developer-facing progress and verification experience
+
+For repository and implementation tasks, present progress in a compact, evidence-oriented format:
+- **Goal and scope:** intended behavior and files/components in scope.
+- **Plan:** small ordered steps and acceptance checks for non-trivial work.
+- **Changes:** what actually changed, separated from proposals or untouched files.
+- **Verification:** commands run and exact pass/fail/skip outcomes; identify mocked tests versus live Mac/provider checks.
+- **Review findings and remaining risks:** unresolved issues, untested paths, and required user decisions.
+- **Git state:** branch and commit/PR status, clearly distinguishing local/isolated work from shared remote changes.
+
+Do not report 'fixed', 'passing', or 'complete' based only on code inspection or another agent's message. Keep small requests lightweight and never overwhelm the user with process narration.
