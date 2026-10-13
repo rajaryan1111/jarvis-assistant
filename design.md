@@ -277,3 +277,10 @@ For repository and implementation tasks, present progress in a compact, evidence
 - **Git state:** branch and commit/PR status, clearly distinguishing local/isolated work from shared remote changes.
 
 Do not report 'fixed', 'passing', or 'complete' based only on code inspection or another agent's message. Keep small requests lightweight and never overwhelm the user with process narration.
+
+
+## 19. Evidence and external-tool status in the HUD — 2026-10-13
+
+When a research or external-information task returns results, the HUD should be able to show the source link, retrieval time, and a short evidence excerpt/reference, with a clear label for stale, blocked, empty, failed, or insufficient-evidence results. Do not imply a result is authoritative simply because an API responded successfully. Avoid dumping full private source content into the UI's persistent event log; show the minimum needed and let the user open the source.
+
+Only add a source-specific UI control when the underlying adapter and status semantics are implemented and tested. The audit's proposed API list is a research shortlist, not a promise that those integrations exist.
