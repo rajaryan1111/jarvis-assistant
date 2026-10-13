@@ -22,6 +22,8 @@ os.environ["ULTRON_KNOWLEDGE_DIR"] = str(_SANDBOX / "knowledge_docs")
 os.environ["ULTRON_KNOWLEDGE_INDEX"] = str(_SANDBOX / "knowledge_index.json")
 os.environ["ULTRON_FACE_DIR"] = str(_SANDBOX / "faces")
 os.environ["ULTRON_SCREENSHOT_DIR"] = str(_SANDBOX / "screenshots")
+os.environ["ULTRON_PROJECT_ROOT"] = str(_SANDBOX / "project")
+(_SANDBOX / "project").mkdir(exist_ok=True)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # Opt-in live provider tests (tests/live) need the owner's real key and model settings, which
@@ -126,15 +128,18 @@ def legacy(monkeypatch, tmp_path, fake_runner, fake_opener):
     cache_dir.mkdir()
     shots = tmp_path / "Shots"
     shots.mkdir()
+    project_dir = tmp_path / "Project"
+    project_dir.mkdir()
     monkeypatch.setattr(main, "TOOLS", main.build_tool_registry(
         platform="darwin", runner=fake_runner, cache_dir=cache_dir, opener=fake_opener,
-        screenshot_dir=shots, temperature_candidates=()))
+        screenshot_dir=shots, temperature_candidates=(), project_root=project_dir))
     monkeypatch.setattr(main.subprocess, "run", fake_runner)
     monkeypatch.setattr(main.webbrowser, "open", fake_opener)
     monkeypatch.setattr(main, "jarvis_sleep", False)
     monkeypatch.setattr(main, "memory", fresh_memory())
     monkeypatch.setattr(main, "save_memory", lambda mem: None)
     monkeypatch.setattr(main, "cache_dir_for_tests", cache_dir, raising=False)
+    monkeypatch.setattr(main, "project_root_for_tests", project_dir, raising=False)
     return main
 
 

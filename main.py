@@ -43,6 +43,7 @@ from ultron.tools.macos import (
     SpeakTool,
     VolumeTool,
 )
+from ultron.tools.project import ProjectInspectTool
 from ultron.tools.registry import ToolOutcome, ToolRegistry
 from ultron.tools.system import ClearUserCachesTool, PowerTool
 
@@ -1606,7 +1607,8 @@ def _reminder_count_preview(_args) -> str:
 
 
 def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, opener=None,
-                        screenshot_dir=None, temperature_candidates=None, voice_trust=None) -> ToolRegistry:
+                        screenshot_dir=None, temperature_candidates=None, voice_trust=None,
+                        project_root=None) -> ToolRegistry:
     """Every state-changing legacy operation (and every read-only tool the agent loop may use)
     is registered here with its risk tier.
 
@@ -1707,6 +1709,7 @@ def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, op
                                   "description": "City name; omit for the default city."})))
     registry.register(_fn_tool("news.headlines", "Get the top news headlines.", R.OBSERVE, _tool_news,
                                side_effects={"network"}, external_content=True, parameters=_NO_ARGS))
+    registry.register(ProjectInspectTool(root=project_root, runner=runner))
     return registry
 
 

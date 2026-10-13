@@ -40,6 +40,7 @@ DEFAULT_AGENT_TOOLS: tuple[str, ...] = (
     "wiki.summary",
     "weather.current",
     "news.headlines",
+    "project.inspect",
     "memory.add_note",
     "reminders.add",
     "apps.open",

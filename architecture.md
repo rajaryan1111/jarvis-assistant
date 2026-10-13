@@ -77,7 +77,7 @@ The task/session coordinator and unified artifact workspace are target architect
 | `ultron/agent/schema.py` | Supported JSON-schema subset | Reject unsupported schemas/invalid arguments |
 | `ultron/tools/base.py` | Tool contract, risk metadata, schema, side-effect/external-content flags | Narrow explicit capabilities |
 | `ultron/tools/registry.py` | Authorization boundary, pending approvals, audit | Authoritative enforcement point |
-| `ultron/tools/macos.py`, `paths.py`, `process.py` | macOS tool implementations, path validation, bounded subprocess runner | Argument arrays (`shell=False`), timeouts, path checks |
+| `ultron/tools/macos.py`, `paths.py`, `process.py`, `project.py` | macOS tool implementations, path confinement/sensitive-file filters, bounded subprocess runner, read-only `project.inspect` tool | Argument arrays (`shell=False`), timeouts, canonical root confinement, `O_NOFOLLOW`, sensitive-file exclusion |
 | `ultron/security/policy.py` | Caller context, channels, risk tiers, decisions | Model text/external content cannot grant permission |
 | `ultron/security/confirmation.py`, `sessions.py`, `session_state.py`, `tokens.py`, `redact.py`, `secret_scan.py` | Pending-action confirmation, session/token handling, log/tool redaction, secret scanning | Approval bound to authorized HUD path; secrets redacted |
 | `ultron/api/app.py` | Flask HUD/API, authentication, Host/Origin/CSRF protections | Safe defaults and protected requests |

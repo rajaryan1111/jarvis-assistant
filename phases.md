@@ -63,7 +63,7 @@ Exit criteria:
 
 **Goal:** Make repository-aware coding and debugging safe and repeatable.
 
-Work: repository inspection; error/log analysis; small patch workflow; test selection; diff review; dependency/environment diagnostics; branch/base checks; artifact summaries.
+Work: repository inspection (`project.inspect` in `ultron/tools/project.py` with path confinement in `ultron/tools/paths.py`, implemented and tested in `tests/test_project_inspect.py`); error/log analysis; small patch workflow; test selection; diff review; dependency/environment diagnostics; branch/base checks; artifact summaries.
 
 Exit criteria:
 - Branch, HEAD, and working tree are checked before edits.
