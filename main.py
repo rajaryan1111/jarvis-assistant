@@ -436,10 +436,18 @@ def get_live_cricket_score(cmd: str) -> str:
             params={"apikey": CRICKET_API_KEY, "offset": 0},
             timeout=8,
         )
+        resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            return "The cricket API returned an invalid response, sir."
+        if data.get("status") == "failure" or data.get("error"):
+            return "The cricket service could not provide live scores right now, sir."
 
-        # Different APIs might use different keys; try to be defensive.
-        matches = data.get("data") or data.get("matches") or []
+        # Different API versions may use different keys; validate before processing.
+        raw_matches = data.get("data") or data.get("matches") or []
+        if not isinstance(raw_matches, list):
+            return "The cricket API returned invalid match data, sir."
+        matches = [match for match in raw_matches if isinstance(match, dict)]
         if not matches:
             return "I did not find any ongoing match right now, sir."
 
@@ -474,6 +482,8 @@ def get_live_cricket_score(cmd: str) -> str:
 
         parts = []
         for inn in innings_list:
+            if not isinstance(inn, dict):
+                continue
             r = inn.get("r") or inn.get("runs") or "?"
             w = inn.get("w") or inn.get("wickets") or "?"
             o = inn.get("o") or inn.get("overs") or "?"
