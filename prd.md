@@ -355,3 +355,12 @@ Before introducing agent frameworks, new retrieval engines, or multi-agent orche
 For document retrieval, benchmark the current baseline against keyword, semantic, and hybrid retrieval on representative course notes, question banks, and project documents before adding reranking or a new store. Track retrieval coverage/relevance, unsupported-answer rate, citation support, language/script behavior where applicable, latency, and operational cost. Add complexity only when measured results justify it.
 
 Research basis: [selective review of awesome-llm-apps](docs/research/awesome-llm-apps-review.md). These decisions adapt evaluation and retrieval patterns; they do not adopt the upstream framework stack.
+
+
+## 19. Run observability and end-to-end budgets — 2026-10-13
+
+For multi-step tasks, ULTRON should expose honest per-task progress and a privacy-conscious event history. Events may include request accepted, plan checkpoint, provider call, tool proposal, policy/approval decision, tool start/end, cancellation, failure, and final outcome. Each event should have a task/correlation ID, timestamp, duration where applicable, status, and minimal non-sensitive metadata. Do not log raw conversation, transcripts, screenshots, secrets, or file contents by default. UI history must be backed by actual recorded events, not reconstructed from model claims.
+
+Enforce cumulative task budgets across the whole agent loop: model/tool steps, elapsed time, retries, output/context size, and optional token/spend caps when reliable provider usage is available. A budget stop preserves completed artifacts/evidence and returns a clear partial/budget-exhausted status. State-changing tool retries must reconcile the prior outcome or stop for review rather than repeat an uncertain side effect.
+
+Research basis: [Ruflo selective review](docs/research/ruflo-review.md). These requirements are proposed; they do not imply that structured run history or cumulative budgets are fully implemented today.
