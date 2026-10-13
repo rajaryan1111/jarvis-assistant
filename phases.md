@@ -302,3 +302,15 @@ All phases use the project's [development workflow](docs/development-workflow.md
 6. **Integration gate:** present integration choices and wait for explicit approval before remote pushes, merges, deployments, destructive operations, or publication.
 
 Passing deterministic tests does not prove live provider, microphone, speech, camera, or macOS automation behavior. Keep hardware/live acceptance checks explicit.
+
+
+## 20. Repository-audit follow-up — 2026-10-13
+
+- [ ] Review existing external-tool implementations and tests for bounded timeouts, response-size limits, rate-limit handling, retry classification, and honest empty/blocked/error states; fix only demonstrated gaps.
+- [ ] Verify research/RAG outputs preserve source URLs, retrieval time, evidence references, and explicit uncertainty.
+- [ ] Add a small bilingual (English/Hindi/Romanized Hindi/code-switched) regression set for tool selection, argument extraction, and retrieval answers without using private personal data.
+- [ ] If a research API is requested, prototype exactly one adapter (prefer a user-need-matched official source such as arXiv/OpenAlex) with fixtures and source attribution before considering another.
+- [ ] Keep normal CI deterministic and separate opt-in live API, provider, microphone, and target-Mac checks.
+- [ ] Before reusing code from another repository, inspect its exact source, tests, dependency/license terms, and compatibility; document what is reused and why.
+
+Do not create new infrastructure merely to complete this checklist. Existing functionality that already meets a criterion should be verified and marked accordingly rather than duplicated. Full findings: [GitHub account audit](docs/research/github-account-audit-2026-10-13.md).
