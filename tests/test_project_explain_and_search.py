@@ -487,3 +487,131 @@ def test_explain_and_search_never_modify_files_or_execute_code(tmp_path, fake_ru
     assert target.read_bytes() == before_bytes
     assert list(repo.iterdir()) == [target]
     assert fake_runner.calls == []
+
+
+# ============================================================ 14. literal paths, '..' filenames & policy consistency
+def test_explain_and_search_preserve_literal_percent_and_double_dot_filenames(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "outside.py").write_text("OUTSIDE_SECRET = 1\n", encoding="utf-8")
+
+    repo = _seed_sample_repo(tmp_path / "repo")
+    explain = ProjectExplainTool(root=repo)
+    search = ProjectSearchTool(root=repo)
+
+    # Encoded-looking traversal strings are treated as literal names and do not escape root
+    for missing_literal in ("..%2F..%2Foutside.py", "%2e%2e%2foutside"):
+        assert explain.run({"path": missing_literal}).data["reason"] == "not_found"
+        assert search.run({"query": "OUTSIDE_SECRET", "path": missing_literal}).data["reason"] == "not_found"
+
+    # Create literal files with '%' and '..' and a directory named '%2e%2e%2foutside' inside repo
+    (repo / "report%20v1.txt").write_text("percent twenty needle\n", encoding="utf-8")
+    (repo / "notes_100%25.md").write_text("# Notes 100%\npercent twenty-five needle\n", encoding="utf-8")
+    (repo / "report..txt").write_text("double dot text needle\n", encoding="utf-8")
+    (repo / "v1..v2.diff").write_text("+added line needle\n", encoding="utf-8")
+    (repo / "foo..bar.py").write_text(
+        '"""Module with double dot in filename."""\n\n'
+        "def double_dot_fn(x: int) -> int:\n"
+        "    return x * 2\n",
+        encoding="utf-8",
+    )
+    lit_dir = repo / "%2e%2e%2foutside"
+    lit_dir.mkdir()
+    (lit_dir / "inside.py").write_text("def inside_fn() -> str:\n    return 'safe_inside'\n", encoding="utf-8")
+
+    exp_py = explain.run({"path": "foo..bar.py", "symbol": "double_dot_fn"})
+    assert exp_py.ok is True
+    assert exp_py.data["observed"]["symbol"] == "double_dot_fn"
+
+    for lit_file in ("report%20v1.txt", "notes_100%25.md", "report..txt", "v1..v2.diff"):
+        exp_lit = explain.run({"path": lit_file})
+        assert exp_lit.ok is True and exp_lit.data["path"] == lit_file
+
+    exp_dir_file = explain.run({"path": "%2e%2e%2foutside/inside.py", "symbol": "inside_fn"})
+    assert exp_dir_file.ok is True
+    assert exp_dir_file.data["path"] == "%2e%2e%2foutside/inside.py"
+
+    srch_dir = search.run({"query": "safe_inside", "path": "%2e%2e%2foutside"})
+    assert srch_dir.ok is True
+    assert [m["path"] for m in srch_dir.data["matches"]] == ["%2e%2e%2foutside/inside.py"]
+
+    srch_all = search.run({"query": "needle"})
+    assert srch_all.ok is True
+    matched_paths = {m["path"] for m in srch_all.data["matches"]}
+    assert matched_paths == {"report%20v1.txt", "notes_100%25.md", "report..txt", "v1..v2.diff"}
+
+
+@pytest.mark.parametrize(
+    "target_path,expected_reason",
+    [
+        ("../outside.py", "path_traversal"),
+        ("pkg/../../outside.py", "path_traversal"),
+        ("C:/Windows/win.ini", "path_outside_root"),
+        ("C:\\secret.py", "path_outside_root"),
+        ("/etc/passwd", "path_outside_root"),
+        ("~/secret.py", "path_outside_root"),
+        ("main.py\x00.txt", "invalid_path"),
+        ("main.py\n", "invalid_path"),
+        (".env", "sensitive"),
+        (".env.local", "sensitive"),
+        ("private.key", "sensitive"),
+        ("credentials.json", "sensitive"),
+        (".ssh", "sensitive"),
+        (".aws", "sensitive"),
+        (".gnupg", "sensitive"),
+        (".kube", "sensitive"),
+        ("faces", "sensitive"),
+        (".aws/config", "sensitive"),
+        (".kube/config", "sensitive"),
+        (".ssh/id_rsa", "sensitive"),
+    ],
+)
+def test_all_three_project_tools_enforce_consistent_target_path_policy(
+    tmp_path, target_path, expected_reason
+):
+    from tests.conftest import FakeRunner
+    from ultron.tools.project import ProjectInspectTool
+
+    repo = _seed_sample_repo(tmp_path / "repo")
+    for sdir in (".ssh", ".aws", ".gnupg", ".kube", "faces"):
+        d = repo / sdir
+        d.mkdir(exist_ok=True)
+        (d / "config").write_text("DO_NOT_READ = 'secret'\n", encoding="utf-8")
+    (repo / ".env").write_text("DO_NOT_READ=secret\n", encoding="utf-8")
+
+    inspect_res = ProjectInspectTool(root=repo, runner=FakeRunner()).run({"path": target_path})
+    explain_res = ProjectExplainTool(root=repo).run({"path": target_path})
+    search_res = ProjectSearchTool(root=repo).run({"query": "DO_NOT_READ", "path": target_path})
+
+    assert inspect_res.ok is False and inspect_res.data["reason"] == expected_reason
+    assert explain_res.ok is False and explain_res.data["reason"] == expected_reason
+    assert search_res.ok is False and search_res.data["reason"] == expected_reason
+    for res in (inspect_res, explain_res, search_res):
+        assert "DO_NOT_READ" not in str(res.data) and "DO_NOT_READ" not in res.message
+
+
+def test_explain_and_search_reject_nested_and_relative_symlink_chains(tmp_path):
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "outside_module.py"
+    outside_file.write_text("CHAIN_LEAK = 'escaped'\n", encoding="utf-8")
+
+    repo = _seed_sample_repo(tmp_path / "repo")
+    # Relative symlink escaping root: repo/pkg/rel_escape.py -> ../../../outside_dir/outside_module.py
+    rel_link = repo / "pkg" / "rel_escape.py"
+    rel_link.symlink_to("../../../outside_dir/outside_module.py")
+    # Multi-hop symlink chain: hop1 -> hop2 -> outside_dir
+    hop2 = repo / "hop2"
+    hop2.symlink_to(outside_dir)
+    hop1 = repo / "hop1"
+    hop1.symlink_to(hop2)
+
+    explain = ProjectExplainTool(root=repo)
+    search = ProjectSearchTool(root=repo)
+
+    assert explain.run({"path": "pkg/rel_escape.py"}).data["reason"] == "symlink_escape"
+    assert explain.run({"path": "hop1/outside_module.py"}).data["reason"] == "symlink_escape"
+    assert search.run({"query": "CHAIN_LEAK", "path": "hop1"}).data["reason"] == "symlink_escape"
+
+    full_scan = search.run({"query": "CHAIN_LEAK"})
+    assert full_scan.ok is True and full_scan.data["count"] == 0

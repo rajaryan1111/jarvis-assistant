@@ -18,6 +18,7 @@ and adds read-only repository confinement helpers for Phase 5 project inspection
 from __future__ import annotations
 
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -144,16 +145,30 @@ _SENSITIVE_KEYWORDS: tuple[str, ...] = (
 )
 
 
+_DRIVE_LETTER_RE = re.compile(r"^[A-Za-z]:")
+
+
 def is_sensitive_path(path: str | os.PathLike[str]) -> bool:
-    """Return True if ``path`` names a credential, key, token, ``.env`` or private data file."""
-    candidate = Path(path)
-    parts = [part.lower() for part in candidate.parts if part not in ("", ".")]
+    """Return True if ``path`` names a credential, key, token, ``.env`` or sensitive directory/file."""
+    raw = str(path).strip()
+    if not raw:
+        return False
+    candidate = Path(raw)
+    parts = [part.strip().lower() for part in candidate.parts if part.strip() not in ("", ".")]
     if not parts:
         return False
-    if any(part in _SENSITIVE_DIRS for part in parts[:-1]):
+    if any(part in _SENSITIVE_DIRS for part in parts):
         return True
-    name = parts[-1]
-    if name == ".env" or name.startswith(".env.") or name.startswith(".env_") or name.endswith(".env"):
+    name = parts[-1].rstrip(". ")
+    if not name:
+        name = parts[-1]
+    if (
+        name == ".env"
+        or name.startswith(".env.")
+        or name.startswith(".env_")
+        or name.endswith(".env")
+        or parts[-1].startswith(".env")
+    ):
         return True
     if name in _SENSITIVE_EXACT_NAMES:
         return True
@@ -169,7 +184,7 @@ def resolve_project_root(root: str | os.PathLike[str] | None = None) -> Path:
 
 
 def resolve_confined_path(root: Path, relative_path: str = ".") -> Path:
-    """Resolve ``relative_path`` inside ``root``, rejecting traversal, absolute paths and symlinks."""
+    """Resolve literal ``relative_path`` inside ``root``, rejecting traversal, absolute paths and symlinks."""
     canonical_root = resolve_directory(root, create=False, allow_symlink=False)
     if not isinstance(relative_path, str):
         raise PathPolicyError("path must be a string")
@@ -180,7 +195,13 @@ def resolve_confined_path(root: Path, relative_path: str = ".") -> Path:
     raw = relative_path.strip() or "."
     if raw == ".":
         return canonical_root
-    if raw.startswith("~") or os.path.isabs(raw) or Path(raw).is_absolute() or "\\" in raw:
+    if (
+        raw.startswith("~")
+        or os.path.isabs(raw)
+        or Path(raw).is_absolute()
+        or "\\" in raw
+        or _DRIVE_LETTER_RE.match(raw) is not None
+    ):
         raise PathPolicyError("path must be relative to the authorized project root")
 
     rel = Path(raw)

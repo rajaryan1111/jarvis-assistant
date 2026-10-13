@@ -456,3 +456,135 @@ def test_resolve_project_root_and_confined_path_reject_bad_inputs(tmp_path):
     assert root == tmp_path.resolve()
     with pytest.raises(PathPolicyError):
         resolve_confined_path(root, "../escape")
+
+
+# ============================================================ 11. literal paths, '..' filenames & sensitive dirs
+def test_literal_percent_and_double_dot_names_are_preserved_without_escaping_root(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "README.md").write_text("OUTSIDE SECRET DATA", encoding="utf-8")
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    # Before creating literal encoded directories inside repo, encoded-looking paths do not
+    # escape to tmp_path / "outside"; they simply do not exist inside repo.
+    tool = ProjectInspectTool(root=repo, runner=FakeRunner())
+    for literal_missing in ("..%2F..%2Foutside", "%2e%2e%2foutside", "%252e%252e%252foutside"):
+        missing_res = tool.run({"path": literal_missing})
+        assert missing_res.ok is False
+        assert missing_res.data["reason"] == "not_found"
+        assert "OUTSIDE SECRET DATA" not in missing_res.message
+
+    # Create legitimate literal filenames with '%' and '..' inside repo
+    (repo / "report%20v1.txt").write_text("literal percent twenty\n", encoding="utf-8")
+    (repo / "notes_100%25.md").write_text("# Literal 100%\n", encoding="utf-8")
+    (repo / "report..txt").write_text("double dot file\n", encoding="utf-8")
+    (repo / "v1..v2.diff").write_text("diff content\n", encoding="utf-8")
+    (repo / "foo..bar.py").write_text("def check():\n    return 42\n", encoding="utf-8")
+
+    literal_dir = repo / "%2e%2e%2foutside"
+    literal_dir.mkdir()
+    (literal_dir / "README.md").write_text("# Inside Literal Dir\nSafe inside repo.\n", encoding="utf-8")
+
+    dots_dir = repo / "release..v1"
+    dots_dir.mkdir()
+    (dots_dir / "README.md").write_text("# Release v1\n", encoding="utf-8")
+
+    assert resolve_confined_path(repo, "report%20v1.txt") == (repo / "report%20v1.txt").resolve()
+    assert resolve_confined_path(repo, "notes_100%25.md") == (repo / "notes_100%25.md").resolve()
+    assert resolve_confined_path(repo, "report..txt") == (repo / "report..txt").resolve()
+    assert resolve_confined_path(repo, "v1..v2.diff") == (repo / "v1..v2.diff").resolve()
+    assert resolve_confined_path(repo, "foo..bar.py") == (repo / "foo..bar.py").resolve()
+    assert resolve_confined_path(repo, "%2e%2e%2foutside") == literal_dir.resolve()
+
+    res_lit = tool.run({"path": "%2e%2e%2foutside"})
+    assert res_lit.ok is True
+    assert res_lit.data["target"] == "%2e%2e%2foutside"
+    assert "Inside Literal Dir" in res_lit.data["readme_excerpt"]
+    assert "OUTSIDE SECRET DATA" not in str(res_lit.data)
+
+    res_dots = tool.run({"path": "release..v1"})
+    assert res_dots.ok is True
+    assert res_dots.data["target"] == "release..v1"
+
+    root_scan = tool.run({})
+    assert root_scan.ok is True
+    for expected_file in ("report%20v1.txt", "notes_100%25.md", "report..txt", "v1..v2.diff", "foo..bar.py"):
+        assert expected_file in root_scan.data["structure"]["files"]
+
+
+@pytest.mark.parametrize(
+    "bad_attempt,expected_reason",
+    [
+        ("..", "path_traversal"),
+        ("../outside", "path_traversal"),
+        ("sub/../../outside", "path_traversal"),
+        ("C:/Windows/System32", "path_outside_root"),
+        ("D:\\secret", "path_outside_root"),
+        ("//etc/passwd", "path_outside_root"),
+        ("sub\x00/dir", "invalid_path"),
+        ("sub\n/dir", "invalid_path"),
+        ("sub\r/dir", "invalid_path"),
+        ("sub\x7f/dir", "invalid_path"),
+    ],
+)
+def test_inspect_blocks_actual_traversal_drive_letters_and_control_chars(
+    tmp_path, bad_attempt, expected_reason
+):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tool = ProjectInspectTool(root=repo, runner=FakeRunner())
+    res = tool.run({"path": bad_attempt})
+    assert res.ok is False
+    assert res.data["reason"] == expected_reason
+
+
+@pytest.mark.parametrize(
+    "sensitive_target",
+    [
+        ".ssh",
+        ".aws",
+        ".gnupg",
+        ".kube",
+        "faces",
+        "sub/.ssh",
+        ".aws/config",
+        ".kube/config",
+        ".gnupg/trustdb.gpg",
+        ".ssh/config",
+        "faces/owner.jpg",
+        ".env ",
+        ".env.",
+        ".ENV",
+        "ID_RSA",
+        "Credentials.JSON",
+    ],
+)
+def test_is_sensitive_path_recognizes_sensitive_directories_and_descendants(sensitive_target):
+    assert is_sensitive_path(sensitive_target) is True
+
+
+def test_inspect_rejects_sensitive_targets_and_skips_sensitive_directories(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for sdir in (".ssh", ".aws", ".gnupg", ".kube"):
+        d = repo / sdir
+        d.mkdir()
+        (d / "config").write_text("SECRET_DIR_CONTENT\n", encoding="utf-8")
+    (repo / ".env").write_text("SECRET_ENV=1\n", encoding="utf-8")
+
+    tool = ProjectInspectTool(root=repo, runner=FakeRunner())
+    for target in (".ssh", ".aws", ".gnupg", ".kube", "faces", ".env", ".env.local", "private.key"):
+        res = tool.run({"path": target})
+        assert res.ok is False
+        assert res.data == {"reason": "sensitive"}
+
+    scan = tool.run({})
+    assert scan.ok is True
+    for sdir in (".ssh", ".aws", ".gnupg", ".kube"):
+        assert sdir not in scan.data["structure"]["directories"]
+    skipped = {item["path"]: item["reason"] for item in scan.data["skipped"]}
+    for sdir in (".ssh", ".aws", ".gnupg", ".kube"):
+        assert skipped[sdir] == "sensitive"
+    assert "SECRET_DIR_CONTENT" not in str(scan.data)

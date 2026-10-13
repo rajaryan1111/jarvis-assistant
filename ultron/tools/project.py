@@ -281,11 +281,37 @@ def _precheck_relative_syntax(raw_path: str) -> str | None:
     stripped = raw_path.strip()
     if not stripped:
         return "invalid_path"
-    if stripped.startswith("~") or os.path.isabs(stripped) or Path(stripped).is_absolute() or "\\" in stripped:
+    if (
+        stripped.startswith("~")
+        or os.path.isabs(stripped)
+        or Path(stripped).is_absolute()
+        or "\\" in stripped
+        or (len(stripped) >= 2 and stripped[0].isalpha() and stripped[1] == ":")
+    ):
         return "path_outside_root"
     if ".." in Path(stripped).parts:
         return "path_traversal"
     return None
+
+
+def _resolve_tool_target(
+    canonical_root: Path,
+    raw_path: str,
+) -> tuple[Path | None, str | None, str | None]:
+    """Validate and resolve ``raw_path`` inside ``canonical_root`` with consistent policy."""
+    pre_err = _precheck_relative_syntax(raw_path)
+    if pre_err is not None:
+        return None, pre_err, "path is not allowed"
+    if raw_path.strip() != "." and is_sensitive_path(raw_path):
+        return None, "sensitive", "sensitive path is not permitted"
+    try:
+        target = resolve_confined_path(canonical_root, raw_path)
+    except PathPolicyError as exc:
+        return None, _classify_path_error(exc), str(exc)
+    rel = "." if target == canonical_root else str(target.relative_to(canonical_root))
+    if rel != "." and is_sensitive_path(rel):
+        return None, "sensitive", "sensitive path is not permitted"
+    return target, None, None
 
 
 class ProjectInspectTool:
@@ -348,11 +374,19 @@ class ProjectInspectTool:
                 {"reason": "invalid_root"},
             )
 
-        try:
-            target = resolve_confined_path(canonical_root, raw_path)
-        except PathPolicyError as exc:
-            reason = _classify_path_error(exc)
-            return ToolResult(False, f"Cannot inspect '{redact(raw_path)}': {exc}.", {"reason": reason})
+        target, err_reason, err_detail = _resolve_tool_target(canonical_root, raw_path)
+        if err_reason == "sensitive":
+            return ToolResult(
+                False,
+                f"Refusing to inspect sensitive path '{redact(raw_path)}'.",
+                {"reason": "sensitive"},
+            )
+        if err_reason is not None or target is None:
+            return ToolResult(
+                False,
+                f"Cannot inspect '{redact(raw_path)}': {err_detail}.",
+                {"reason": err_reason or "invalid_path"},
+            )
 
         if not target.is_dir():
             return ToolResult(
@@ -920,34 +954,21 @@ class ProjectExplainTool:
                 {"reason": "invalid_root"},
             )
 
-        pre_err = _precheck_relative_syntax(raw_path)
-        if pre_err is not None:
-            return ToolResult(
-                False,
-                f"Cannot explain '{redact(raw_path)}': path is not allowed.",
-                {"reason": pre_err},
-            )
-
-        if is_sensitive_path(raw_path):
+        target, err_reason, err_detail = _resolve_tool_target(canonical_root, raw_path)
+        if err_reason == "sensitive":
             return ToolResult(
                 False,
                 f"Refusing to explain sensitive file '{redact(raw_path)}'.",
                 {"reason": "sensitive"},
             )
-
-        try:
-            target = resolve_confined_path(canonical_root, raw_path)
-        except PathPolicyError as exc:
-            reason = _classify_path_error(exc)
-            return ToolResult(False, f"Cannot explain '{redact(raw_path)}': {exc}.", {"reason": reason})
-
-        rel_path = str(target.relative_to(canonical_root))
-        if is_sensitive_path(rel_path):
+        if err_reason is not None or target is None:
             return ToolResult(
                 False,
-                f"Refusing to explain sensitive file '{redact(rel_path)}'.",
-                {"reason": "sensitive"},
+                f"Cannot explain '{redact(raw_path)}': {err_detail}.",
+                {"reason": err_reason or "invalid_path"},
             )
+
+        rel_path = str(target.relative_to(canonical_root))
 
         if target.is_dir():
             return ToolResult(
@@ -1872,34 +1893,21 @@ class ProjectSearchTool:
                 {"reason": "invalid_root"},
             )
 
-        pre_err = _precheck_relative_syntax(raw_path)
-        if pre_err is not None:
-            return ToolResult(
-                False,
-                f"Cannot search '{redact(raw_path)}': path is not allowed.",
-                {"reason": pre_err},
-            )
-
-        if raw_path.strip() != "." and is_sensitive_path(raw_path):
+        target, err_reason, err_detail = _resolve_tool_target(canonical_root, raw_path)
+        if err_reason == "sensitive":
             return ToolResult(
                 False,
                 f"Refusing to search sensitive path '{redact(raw_path)}'.",
                 {"reason": "sensitive"},
             )
-
-        try:
-            target = resolve_confined_path(canonical_root, raw_path)
-        except PathPolicyError as exc:
-            reason = _classify_path_error(exc)
-            return ToolResult(False, f"Cannot search '{redact(raw_path)}': {exc}.", {"reason": reason})
-
-        rel_target = "." if target == canonical_root else str(target.relative_to(canonical_root))
-        if rel_target != "." and is_sensitive_path(rel_target):
+        if err_reason is not None or target is None:
             return ToolResult(
                 False,
-                f"Refusing to search sensitive path '{redact(rel_target)}'.",
-                {"reason": "sensitive"},
+                f"Cannot search '{redact(raw_path)}': {err_detail}.",
+                {"reason": err_reason or "invalid_path"},
             )
+
+        rel_target = "." if target == canonical_root else str(target.relative_to(canonical_root))
 
         candidate_files, skipped, walk_truncated, walk_reason = self._collect_files(
             canonical_root=canonical_root,
