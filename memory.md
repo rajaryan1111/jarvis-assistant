@@ -182,6 +182,15 @@ Adapted relevant practices from [obra/superpowers](https://github.com/obra/super
 - Do not copy Superpowers skill text wholesale. Reuse the ideas in our own project context and preserve its MIT notice if any substantial portions are ever copied.
 
 
+## 20. External repository review — Ruflo — 2026-10-13
+
+Reviewed https://github.com/ruvnet/ruflo (repository license metadata: MIT) as a large agent-harness/orchestration reference. Decision: **do not integrate the full Ruflo harness, CLI, MCP catalog, plugins, swarms, federation, or adaptive memory** at this stage. ULTRON already has a provider-neutral agent runtime and central registry/policy; a second harness would add overlapping orchestration and security surface before a demonstrated need exists.
+
+Useful ideas recorded for our roadmap: minimal structured per-task event history; cumulative step/time/retry/output budgets; action-specific least-privilege approvals and easy cancellation/revocation; bounded privacy-conscious audit retention; keyless integration smoke tests separated from live provider/Mac tests; capability labels that distinguish mocked, blocked, skipped, and verified behavior. Treat upstream performance and feature statements as claims until benchmarked in ULTRON's own environment.
+
+Detailed report: [docs/research/ruflo-review.md](docs/research/ruflo-review.md). No source code, dependencies, models, plugins or services were installed/copied. Research only.
+
+
 ## 21. GitHub account repository audit — 2026-10-13
 
 Reviewed repository inventories and relevant docs/source directories across 18 owned repositories and 2 additional collaborator repositories accessible to the linked GitHub account. The full report is [docs/research/github-account-audit-2026-10-13.md](docs/research/github-account-audit-2026-10-13.md).

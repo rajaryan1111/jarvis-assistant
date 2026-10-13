@@ -304,6 +304,39 @@ All phases use the project's [development workflow](docs/development-workflow.md
 Passing deterministic tests does not prove live provider, microphone, speech, camera, or macOS automation behavior. Keep hardware/live acceptance checks explicit.
 
 
+## 18. Quality and retrieval evaluation gate — 2026-10-13
+
+**Gate A — before broadening the agent runtime**
+- [ ] Add a compact deterministic regression suite for malformed tool calls, policy bypass attempts, retry/idempotency, cancellation and budgets, and evidence-backed completion status.
+- [ ] Add source-fidelity/citation fixtures for study and research tasks.
+- [ ] Keep optional model-graded and live-provider evaluations separate from the default deterministic test suite.
+- [ ] Record baseline results before changing the runtime or adopting new orchestration.
+
+**Gate B — before upgrading retrieval**
+- [ ] Assemble a small representative corpus of notes, question banks, and project docs with query/expected-evidence fixtures.
+- [ ] Measure current retrieval coverage/relevance, citation support, unsupported-answer rate, and latency.
+- [ ] Compare keyword, semantic, and hybrid retrieval under the same conditions; evaluate reranking only after baseline comparison.
+- [ ] Decide based on repeatable benefit, acceptable Mac resource use, privacy, and maintenance cost.
+
+**Gate C — before advanced architecture**
+- [ ] Only consider vector-store migration, knowledge graphs, multi-agent research, or extra external services when an observed workload exposes a specific limitation.
+- [ ] Document measured benefit, new failure modes, cost, rollback, license, and data-flow implications.
+
+These are proposed exit criteria, not claims of completed implementation. Full rationale: [awesome-llm-apps review](docs/research/awesome-llm-apps-review.md).
+
+
+## 19. Runtime observability and budget milestone — 2026-10-13
+
+- [ ] Define a minimal structured task-event schema with task/correlation IDs and explicit execution statuses.
+- [ ] Add secret/content redaction and tests proving sensitive payloads are not persisted by default.
+- [ ] Define one cumulative budget across model calls, tool calls, retries, duration, and output/context size; preserve artifacts and explicit partial status on exhaustion.
+- [ ] Add deterministic tests for cancellation, uncertain side-effect outcomes, duplicate execution prevention, and action-specific approval binding.
+- [ ] Add keyless integration smoke tests using provider/tool stubs; place live-provider and actual-Mac checks in separate optional suites with clear statuses and cost caps.
+- [ ] Before requiring audit logs for consequential actions, specify bounded retention, permissions, write-failure behavior, rotation/concurrency handling, and recovery.
+
+Do not add a telemetry platform, cost database, external orchestrator, or swarm subsystem for this milestone. Start with the smallest mechanism that makes tasks debuggable. These criteria are planned, not marked complete; see [Ruflo review](docs/research/ruflo-review.md).
+
+
 ## 20. Repository-audit follow-up — 2026-10-13
 
 - [ ] Review existing external-tool implementations and tests for bounded timeouts, response-size limits, rate-limit handling, retry classification, and honest empty/blocked/error states; fix only demonstrated gaps.

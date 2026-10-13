@@ -279,6 +279,13 @@ For repository and implementation tasks, present progress in a compact, evidence
 Do not report 'fixed', 'passing', or 'complete' based only on code inspection or another agent's message. Keep small requests lightweight and never overwhelm the user with process narration.
 
 
+## 18. Task activity and control feedback — 2026-10-13
+
+For long tasks, the HUD should show a compact timeline with real task events and status: planned, awaiting approval, running, succeeded, failed, blocked, cancelled, budget exhausted, or partial. Show the current step, elapsed time, and a safe summary of tool activity; allow the user to cancel pending/future work and inspect artifacts/results. Do not expose secrets or dump raw transcripts/file contents into event history by default.
+
+If a task stops because of time/step/cost limits, retain completed work and explain what remains. A stop/cancel control must clearly distinguish stopping future execution from reversing a side effect that already happened. Permission prompts should show the exact action, target, and relevant parameters, with separate read/write/manage scopes. These are future UX requirements rather than claims of existing UI functionality.
+
+
 ## 19. Evidence and external-tool status in the HUD — 2026-10-13
 
 When a research or external-information task returns results, the HUD should be able to show the source link, retrieval time, and a short evidence excerpt/reference, with a clear label for stale, blocked, empty, failed, or insufficient-evidence results. Do not imply a result is authoritative simply because an API responded successfully. Avoid dumping full private source content into the UI's persistent event log; show the minimum needed and let the user open the source.

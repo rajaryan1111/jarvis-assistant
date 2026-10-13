@@ -236,6 +236,33 @@ Follow [AGENTS.md](AGENTS.md) for the short always-on rules and [docs/developmen
 - Prefer YAGNI: do not add abstractions, dependencies, automation, or architecture just because a framework suggests them.
 
 
+## 16. Evaluation and dependency-adoption rules — 2026-10-13
+
+- Define a representative, reproducible test/evaluation case before adopting a new model, framework, retrieval engine, database, or orchestration layer.
+- Keep deterministic safety/regression tests separate from optional model-graded evaluations that spend tokens or vary across runs.
+- Evaluate behaviors that matter to ULTRON: unknown/malformed tool rejection, policy boundary enforcement, side-effect retry/idempotency, cancellation/budget limits, honest completion reporting, source fidelity, and citation support.
+- For retrieval changes, compare to a recorded baseline using representative queries/documents. Consider keyword, semantic, and hybrid approaches; add reranking or a new storage service only when evidence demonstrates sufficient benefit.
+- Never infer ULTRON compatibility, accuracy, latency, cost, privacy, or Apple Silicon performance from an upstream demo. Validate on our actual code, representative data, and target Mac where needed.
+- Treat sample repositories as design references, not dependencies. Inspect the exact package/subproject license and security/maintenance posture before copying code; do not copy a complete demo app or its credential/database assumptions blindly.
+- A model-based grader is another fallible model, not a source of truth. Retain explicit expectations, human review for important decisions, and deterministic assertions wherever possible.
+
+Research rationale and rejected options: [awesome-llm-apps review](docs/research/awesome-llm-apps-review.md).
+
+
+## 17. Task events, budgets, and permission rules — 2026-10-13
+
+- Every multi-step task must have a cumulative budget for steps/time/retries/output; include spend/token ceilings only when the chosen provider exposes trustworthy usage and pricing. Child/delegated work consumes the same parent budget, not a fresh unlimited budget.
+- Budget exhaustion stops additional work, preserves already-produced evidence/artifacts, and yields a partial status; do not present a partial result as full success.
+- Record only privacy-minimized task events by default. Never log API keys, auth headers, secrets, raw audio, screenshots, complete private prompts, or full file/tool contents solely for observability.
+- Tool/run logs must distinguish proposed, authorized, started, succeeded, failed, blocked, cancelled, skipped, and unverified states. Do not reconstruct fictional run histories from agent narratives.
+- Approval is action-specific and bound to the exact target and material parameters. Read permission never implies write/manage permission. Revocation/cancellation must stop future work where feasible but cannot pretend an already-committed external side effect was undone.
+- Retry policy must account for side effects. If execution outcome is uncertain, inspect/reconcile it or ask the user instead of blindly repeating the action.
+- If mandatory audit persistence is required for a risk tier, failure to write the audit record blocks that action. Keep low-risk read-only actions usable when optional telemetry is unavailable.
+- Run deterministic keyless integration tests separately from live provider/target-Mac tests. Record blocked/skipped/flaky distinctly from pass and cap any live tests that incur cost or external effects.
+
+Rationale: [Ruflo review](docs/research/ruflo-review.md). These are architecture/security requirements, not evidence of completed implementation.
+
+
 ## 18. External-source and data provenance rules — 2026-10-13
 
 - A successful HTTP response is not proof that its data is current, complete, authoritative, or even the expected resource. Validate schema and semantics before use.
