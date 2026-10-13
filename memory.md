@@ -180,3 +180,17 @@ Adapted relevant practices from [obra/superpowers](https://github.com/obra/super
 - Preserve existing branches and draft PRs; no unapproved push, merge, deployment, or publication.
 - Keep process proportional: trivial tasks do not need a formal design document or multi-agent workflow.
 - Do not copy Superpowers skill text wholesale. Reuse the ideas in our own project context and preserve its MIT notice if any substantial portions are ever copied.
+
+
+## 21. GitHub account repository audit — 2026-10-13
+
+Reviewed repository inventories and relevant docs/source directories across 18 owned repositories and 2 additional collaborator repositories accessible to the linked GitHub account. The full report is [docs/research/github-account-audit-2026-10-13.md](docs/research/github-account-audit-2026-10-13.md).
+
+Highest-value reusable patterns:
+- From GraphOne: shared bounded HTTP, classified retries, source adapters, schema/freshness validation, idempotency, provenance, explicit failure counts, provider fallback, and deterministic fixtures.
+- From AI Orbit Tools Ingestion: source registry, separate discovery from official-source verification, do not guess blocked/missing facts, explainable deduplication, resumable checkpoints, and source-specific fixtures.
+- From IS Copilot: staged retrieval/reranking/evidence assembly, confidence and unknown states, lexical fallback, and explicit Hindi/Hinglish/PDF use cases.
+- From ULTRON itself: extend the current provider-neutral runtime, bounded agent loop, central tool registry/policy, authenticated HUD, optional RAG, and existing test seams rather than introducing a second orchestration framework.
+- Candidate future research sources: arXiv Atom, OpenAlex, selected RSS feeds, Hacker News Algolia, Hugging Face metadata, and OpenRouter model metadata. These are not integrated or approved as production dependencies. Remote OK is only relevant if a career-search workflow is explicitly in scope.
+
+No code, dependency, dataset, personal media, or private repository content was copied. No tests were run across all repositories; this was a targeted reuse audit, not a line-by-line security audit. No PR was opened, no merge/deployment occurred, and main/existing PRs were left unchanged.
