@@ -271,3 +271,20 @@ Exit criteria: no security-control or service-policy bypass; user can stop autom
 Work: adapter contract tests; fault injection; timeout/rate-limit handling; idempotency; audit log; permission revocation; backup/recovery drills; offline behavior; privacy/security review; real macOS packaging and microphone tests.
 
 Exit criteria: each integration marked planned/prototype/verified/unavailable; failures never masquerade as success; cancellation/recovery tested; high-impact approvals reviewed; macOS validated on target hardware.
+
+## Research-informed voice-stack evaluation — 2026-10-13
+
+This is a scoped evaluation task supporting Phases 2/2A and desktop packaging; it does not change phase numbering or claim implementation.
+
+### Candidates
+- **Handy** (MIT): reference for offline transcription UX, VAD, configurable push-to-talk, local STT model choices, cancellation and cross-platform desktop integration. First evaluate its architecture and documented interfaces; do not assume it will be embedded.
+- **OmniVoice** (Apache-2.0): optional multilingual TTS candidate. Test Hindi/English/Hinglish and technical pronunciation on the actual Apple Silicon Mac before deciding whether to add an adapter.
+- **HeyGen HyperFrames** (Apache-2.0): optional future project-demo/pitch-video tool only; not part of the core voice milestone. The provided heygen-comP URL did not identify a specific repository; HyperFrames is a possible intended source and must not be treated as confirmed intent.
+
+### Evaluation exit criteria
+- Written comparison against the current speech path, with versions, license/model terms, dependencies and maintenance notes.
+- Repeatable STT/TTS test set covering Hindi, English, Romanized Hindi, Devanagari, code-switching, technical words, paths, numbers and noisy/quiet speech.
+- Measurements on target Mac: cold start, per-utterance latency, real-time factor where applicable, peak memory, install/model size, network requirements and offline behavior.
+- Failure tests for no microphone permission, unavailable model, no network, cancellation, timeout, empty transcript, low confidence and playback interruption.
+- Optional dependencies remain isolated; existing core tests must still run without downloading ML models.
+- No candidate becomes the default until the results and trade-offs are reviewed and approved. Record actual evidence and known limitations.
