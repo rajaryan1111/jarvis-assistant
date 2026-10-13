@@ -1,7 +1,7 @@
 # Jarvis / ULTRON — Experience and Interaction Design
 
 **Status:** Revised UX direction v2.0  
-**Priority:** Voice/microphone first; HUD and CLI remain companion interfaces.
+**Priority:** Voice/microphone first; HUD and CLI remain companion interfaces. Target audience includes BTech CSE/ECE students across academics, projects, career and everyday student life.
 
 ## 1. Experience intent
 
@@ -152,3 +152,58 @@ Visible controls: microphone/listening status, mute, pause wake word, stop speak
 - Evaluate Hindi, English, Hinglish, Romanized Hindi, and Devanagari separately, including technical terms and ordinary background noise.
 - Never let voice recognition or a spoken confirmation replace authenticated approval for consequential actions.
 - If a language, voice, or offline mode is not available, say so and offer text fallback rather than pretending it worked.
+
+## 14. Student-life companion experience
+
+### 14.1 Start with the user's actual need
+ULTRON should recognize that a student may want different kinds of help at different moments. Useful modes include:
+- **Explain:** teach a concept or clarify an error.
+- **Study with me:** create a revision plan, ask practice questions and track progress.
+- **Build with me:** work through a project in bounded, verifiable steps.
+- **Plan my day:** balance deadlines with available time and personal constraints.
+- **Listen:** let the user talk without immediately turning the conversation into advice.
+- **Think it through:** explore options and trade-offs without making the decision for the user.
+- **Help me communicate:** rehearse a conversation or draft a respectful message.
+- **Take an approved action:** execute a specific permitted task after showing the necessary preview/confirmation.
+
+The user should be able to switch modes naturally and correct ULTRON's interpretation.
+
+### 14.2 Student home/workspace
+The dashboard may surface, with the user's consent:
+- today's classes and deadlines;
+- active course/project/hackathon workspaces;
+- next action, blockers and recent evidence;
+- study topics due for revision;
+- opt-in reminders and application deadlines;
+- recent artifacts and source citations;
+- clear controls for private memory, notifications, audio and data deletion.
+
+Avoid overwhelming dashboards. Let users hide modules and choose what appears on the home screen. Never surface private relationship or well-being content in a public-facing view by default.
+
+### 14.3 Hackathon and project flow
+1. Capture the problem statement, time remaining, budget, team skills and constraints.
+2. Compare possible approaches and clearly state trade-offs.
+3. Define a feasible MVP, task owners, dependencies and demo plan.
+4. Work in small steps and record code/test/simulation/hardware evidence.
+5. Re-plan when a blocker or time change occurs.
+6. Prepare a pitch and demo narrative that accurately represents implemented features.
+
+### 14.4 Study and career flow
+Study mode starts from the student's actual syllabus and supplied notes when requested. It makes source gaps visible and supports explanations, practice and revision. Career mode starts from user-chosen goals and evidence of current skills, then offers a flexible gap plan, interview practice and honest portfolio improvements.
+
+### 14.5 Personal support flow
+When a student says they feel lonely, overwhelmed, rejected or uncertain:
+1. Acknowledge the feeling without minimizing or dramatizing it.
+2. Ask whether they want to talk, reflect, or consider practical next steps.
+3. Offer suggestions only at the level requested; avoid unsolicited productivity pressure.
+4. Support real-world connection and the user's own boundaries and choices.
+5. Keep the conversation private and temporary unless the user chooses to save a specific memory.
+
+For dating/relationship questions, help the user communicate honestly and respectfully. Do not claim to know what another person thinks, script coercive tactics, or encourage surveillance. For persistent or severe distress, gently suggest trusted human or professional support without diagnosing.
+
+### 14.6 Trust, privacy and user controls
+- Keep personal support, finances and private reflections separate from team/project workspaces.
+- Provide inspect, correct, export and delete controls for persistent memory.
+- Make check-ins, reminders, calendar access, budget tracking and external integrations opt-in.
+- Do not optimize every day solely for output; rest and social time count.
+- Clearly show what is stored, what leaves the device, and what is deleted.
