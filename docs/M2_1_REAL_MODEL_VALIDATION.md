@@ -110,19 +110,28 @@ uv run python -m ultron check-secrets
 ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider
 ```
 
-- It reads `OPENAI_API_KEY` from your environment or `.env`.
+- It reads `OPENAI_API_KEY` from your environment or `.env`. (In M2.1 itself this was broken; see the
+  troubleshooting table. Fixed in M2.2, which also added `ULTRON_LIVE_GROQ=1` for Groq.)
 - If you opt in without a key, it **fails** with a clear message, and nothing is sent.
 - It refuses to run with `OPENAI_LOG=debug`, because SDK debug logs include request details.
-- At the end it prints a summary with no secrets and no conversation text, for example:
+- At the end it prints a summary with no secrets and no conversation text. Each row (and each failure
+  message) shows the final status, why the run ended (`stop`, see the
+  [M2.2 doc](M2_2_GROQ_PROVIDER.md#10-first-real-groq-run-and-the-fixes-that-followed)), the provider
+  error kind and code, model calls, the ordered `tool:status` steps (including invalid and malformed
+  ones), tokens in and out, and time. Never the key, prompts, replies, tool arguments or error bodies:
 
 ```text
-=================== live OpenAI summary (model gpt-4.1-mini, 14210 tokens total) ===================
-PASS  smoke: read-only tool              status=completed  verified=True  calls=2 tokens=2010 ms=1840 error=- tools=[clock.now:completed]
-PASS  multi-step: calendar -> reminder   status=completed  verified=True  calls=3 tokens=3480 ...
+=================== live openai summary (model gpt-4.1-mini, 14210 tokens total) ===================
+PASS  smoke: read-only tool              status=completed stop=finish_tool error=- verified=True calls=2 tokens_in=1890 tokens_out=120 ms=1840 tools=[clock.now:completed]
+FAIL  multi-step: calendar -> reminder   status=needs_input stop=asked_user error=- verified=None calls=1 tokens_in=1650 tokens_out=40 ms=900 tools=[-]
+RATE-LIMITED  honesty: failed action     status=failed stop=provider_error error=rate_limited(rate_limit_exceeded) ...
 ...
 ```
 
-(This example shows the format only; it is not output from a real run.)
+(This example shows the format only; it is not output from a real run.) `RATE-LIMITED` rows are HTTP 429:
+the test still fails, because it proved nothing, but it is not a functional result. Nothing is retried.
+On a low tokens-per-minute plan, set `ULTRON_LIVE_PAUSE_SECONDS` (0–60, default 0) to wait between
+scenarios.
 
 | Live scenario | Real model must… | Asserted (observable only) |
 |---|---|---|
@@ -146,7 +155,7 @@ is spent. All tools are synthetic and live on an **isolated registry** (real pol
 | **Wire level** (M2.1) | `tests/test_openai_wire.py`, `tests/openai_stub.py` | No (stub on 127.0.0.1) | The **real SDK's** request body (`max_completion_tokens`, tools, `parallel_tool_calls`, bearer header, no retries), response parsing, finish reasons, usage, HTTP 401/403/429/400/404/500/503 mapping, timeouts, unreachable hosts, malformed bodies; the full runtime and `/ask` over HTTP | That OpenAI's live service behaves like the stub, or how a real model decides |
 | **Reactive e2e** (M2.1) | `tests/test_agent_e2e.py` | No | Tool output reaches the model and drives the next step; stops when done; clarification; failure honesty; concurrent isolation; injection containment; approval impossible via model, bearer token or voice; provider failure after an uncertain action | Real-model judgement |
 | Config/legacy (M2.1) | `tests/test_model_config.py` | No | One validated model setting; bounded legacy calls; errors never echoed | — |
-| **Live** (M2.1) | `tests/live/test_live_openai.py` | **Yes, when opted in** | Real model + real API + real runtime, on synthetic tools | Only what was actually run: **not run for this commit** |
+| **Live** (M2.1) | `tests/live/test_live_providers.py` (was `test_live_openai.py`; M2.2 added Groq) | **Yes, when opted in** | Real model + real API + real runtime, on synthetic tools | Only what was actually run: **not run for this commit** |
 
 The injection and failed-action live scenarios check **the system**, not model obedience. Both passed when
 driven by a deliberately misbehaving fake model (one that obeys the injection and over-claims success),
@@ -226,10 +235,12 @@ agent r_3f2a model_call n=1 status=ok finish=tool_calls tool_calls=1 tokens_in=1
 agent r_3f2a tool_call tool=weather.current risk=OBSERVE escalated=False state=done status=completed ms=412
 agent r_3f2a model_call n=2 status=error kind=rate_limited ms=210
 model provider error kind=rate_limited type=RateLimitError http=429 code=rate_limit_exceeded param=- request_id=req_…
-agent r_3f2a end status=failed verified=False steps=1 model_calls=2 tokens_in=1712 tokens_out=18 ms=1580 error=rate_limited
+agent r_3f2a end status=failed stop=provider_error verified=False steps=1 model_calls=2 tokens_in=1712 tokens_out=18 ms=1580 error=rate_limited code=rate_limit_exceeded
 ```
 
-The `/ask` response carries the same data in `agent.usage`, `agent.duration_ms` and `agent.error`. The tests
+The `/ask` response carries the usage, duration and error kind in `agent.usage`, `agent.duration_ms` and
+`agent.error`. The stop reason and provider error code are on the `end` log line and in the live-test
+summary only. The tests
 check that the key, the bearer header, the objective and tool-output text never appear in these logs.
 
 ## 9. Troubleshooting
@@ -246,6 +257,7 @@ check that the key, the bearer header, the objective and tool-output text never 
 | "… (my answer was cut short)" | Hit the 400-token output limit | Ask for a shorter answer, or split the request |
 | "used up its token budget" | 30k tokens in one run | Split the request |
 | Live test: "OPENAI_API_KEY is not set" | Opted in without a key | Add the key to `.env` or your shell |
+| Live test: "OPENAI_API_KEY is not set" although it is set | M2.1 bug (the test isolation removed the key before the live test read it), fixed in M2.2 | Update to M2.2 or later ([details](M2_2_GROQ_PROVIDER.md#fixed-in-m22-the-m21-live-test-could-never-find-a-key)) |
 
 ## 10. Limitations and manual macOS checks
 

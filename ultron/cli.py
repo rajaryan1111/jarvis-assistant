@@ -271,11 +271,19 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     for name, configured in credential_status().items():
         state = "configured" if configured else "not set (feature disabled)"
         print(f"[{'ok' if configured else '--'}]   {name}: {state}")
-    from ultron.config import load_agent_config, load_chat_model
+    from ultron.config import agent_provider_status, load_agent_config, load_chat_model
 
     agent = load_agent_config()
-    print(f"[--]   models: chat={load_chat_model()} agent={agent.model} "
-          f"(agent loop {'on' if agent.enabled else 'off'}; live check: docs/M2_1_REAL_MODEL_VALIDATION.md)")
+    usable, reason = agent_provider_status(agent)
+    if agent.provider_error:
+        problems += 1
+        print(f"[FAIL] agent loop: {reason}")
+    elif usable:
+        print(f"[ok]   agent loop: {reason} (up to {agent.max_output_tokens} output tokens per model call)")
+    else:
+        print(f"[--]   agent loop off: {reason}")
+    print(f"[--]   models: chat={load_chat_model()} (OpenAI) agent={agent.model} ({agent.provider}); "
+          f"live checks: docs/M2_1_REAL_MODEL_VALIDATION.md, docs/M2_2_GROQ_PROVIDER.md")
 
     print("Optional features:")
     for label, modules, extra in (
@@ -352,8 +360,13 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         return 2
     legacy = importlib.import_module("main")
     if not legacy.agent_available():
-        print("The agent loop is unavailable: set OPENAI_API_KEY in your .env (and do not set ULTRON_AGENT=0).",
-              file=sys.stderr)
+        from ultron.config import agent_provider_status
+
+        _usable, reason = agent_provider_status(legacy.AGENT_CONFIG)
+        if _usable:  # configured, but main.py could not build the provider
+            reason = "the model provider could not be created"
+        print(f"The agent loop is unavailable: {reason}. Set OPENAI_API_KEY (or ULTRON_PROVIDER=groq and "
+              "GROQ_API_KEY) in your .env, and do not set ULTRON_AGENT=0.", file=sys.stderr)
         return 2
     ctx = CommandContext.local_cli()
     try:

@@ -56,7 +56,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
 markers = [
-    "live: calls the real OpenAI API; opt-in with ULTRON_LIVE_OPENAI=1 (see docs/M2_1_REAL_MODEL_VALIDATION.md)",
+    "live: calls a real model provider; opt-in with ULTRON_LIVE_OPENAI=1 or ULTRON_LIVE_GROQ=1 (docs/M2_1_REAL_MODEL_VALIDATION.md, docs/M2_2_GROQ_PROVIDER.md)",
 ]
 
 [tool.ruff]
