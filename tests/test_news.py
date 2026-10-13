@@ -71,3 +71,15 @@ def test_handles_unexpected_json_shapes_without_crashing():
             response.json.return_value = payload
             with patch("news.requests.get", return_value=response):
                 assert get_headlines() == []
+
+
+def test_agent_news_tool_fetches_headlines_only_once(legacy):
+    headlines = ["First headline", "Second headline"]
+    with patch("main.get_credential", return_value="test-news-key"):
+        with patch("main.news.get_headlines", return_value=headlines) as fetch:
+            result = legacy._tool_news({})
+
+    assert result.ok is True
+    assert result.data == {"headlines": headlines}
+    assert result.message == "Here are top headlines. Headline 1: First headline. Headline 2: Second headline."
+    fetch.assert_called_once_with()
