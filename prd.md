@@ -255,3 +255,70 @@ Financial planning must be transparent and based on user-provided assumptions; p
 ## 15. Expanded success measures
 
 In addition to the engineering acceptance criteria, measure task completion and student value: time required to find the next study step; correctness and source fidelity of notes-based answers; hackathon milestone visibility; test/verification accuracy; reminder usefulness; student-rated clarity and emotional tone; and ease of correcting/deleting memory. Use opt-in feedback and privacy-preserving aggregate metrics. Do not infer sensitive traits or score a student's emotional state without explicit consent.
+
+## 16. Voice-driven project copilot and senior-engineer mentor (v5 requirements)
+
+### 16.1 Product promise
+ULTRON should be the user's project-first technical partner: a voice-controlled, locally orchestrated assistant that helps a BTech student plan, understand, build, test, debug, document, review and present multiple projects. It should contribute substantial engineering work when explicitly asked, while keeping the user informed and in control. Its mentoring style should resemble a thoughtful senior engineer: practical, candid, context-aware, willing to challenge assumptions, and clear about trade-offs—not a blindly agreeable code generator.
+
+This is a target product specification, not a claim that every integration or capability already exists.
+
+### 16.2 Project command center
+- Maintain separate, switchable workspaces for each Git repository, branch, issue, task, deadline, stack, architecture decision, environment and project-specific instruction.
+- On request, inspect repository status, files, tests, issues, recent commits, PRs and documentation before proposing changes. State what was inspected and what was inaccessible.
+- Convert voice requests into a plan: goal, current state, assumptions, affected files/services, dependencies, risks, verification, rollback/recovery and approval checkpoints.
+- Support scoped implementation: explain the plan, make bounded changes, run relevant tests and linters, inspect diffs, summarize evidence and leave a clean handoff.
+- Keep project-scoped decision logs, TODOs, unresolved questions, bugs, technical debt, test evidence and next actions. Cross-project retrieval must be explicit.
+- Prioritize multiple projects by deadlines, impact, blockers, learning value, risk and available time; explain the reasoning and allow overrides.
+
+### 16.3 Voice-first command examples
+Support natural English, Hindi, Hinglish, Romanized Hindi and Devanagari where recognition permits. Example intents:
+- “Ultron, open my Indian Standards project and explain the architecture.”
+- “Check the failing tests, find the root cause, and show me a safe fix before changing anything.”
+- “Implement this issue on a new branch, run tests, and prepare a diff for review.”
+- “Compare the Supabase schema with frontend types and tell me what could break.”
+- “Ask Claude or Codex to review this design, but don't send secrets or private files.”
+- “Before I merge this PR, explain consequences, risks and rollback.”
+- “Summarize changes across my projects and suggest the best next task.”
+Voice must never be the only confirmation channel for high-impact actions; show the target, diff and approval in the HUD/website.
+
+### 16.4 Integration ecosystem
+Design an extensible connector registry for GitHub, local Git repositories, terminals/IDEs, Supabase, ChatGPT/Codex, Claude, Antigravity and other coding tools/sites. Prefer official APIs, supported CLIs, MCP servers or documented integration mechanisms. Browser/UI automation is a fallback for permitted, user-visible workflows, not a promise that every website can be controlled reliably.
+
+For every connector, record supported actions, authentication, scopes, data sent, local/cloud execution, rate limits, failure behavior, audit events and read/write capability. A connector is not implemented until tested against the actual service and its limitations are documented.
+
+### 16.5 Senior-mentor reasoning contract
+For consequential technical choices, provide:
+1. Recommendation and why it fits this project's constraints.
+2. Alternatives, including a simpler option where appropriate.
+3. Consequences and trade-offs: complexity, cost, latency, privacy, security, maintainability, lock-in and reliability.
+4. Failure modes and what could go wrong.
+5. Evidence and uncertainty: repository facts, test results, sources or assumptions; never present guesses as verified facts.
+6. A practical next step matched to the student's skill, deadline and learning goal.
+
+Teach while building: explain important decisions in accessible language, offer deeper detail on request, identify insecure patterns, and respectfully challenge risky or overengineered ideas.
+
+### 16.6 Local-first and computer-control requirements
+- Run orchestration, workspace state, policy enforcement, secret handling and audit records locally by default on macOS.
+- Store tokens in macOS Keychain or an equivalent OS credential store, never in source files, logs, prompts or project memory.
+- Prefer local file/Git/terminal operations when suitable. Disclose when code, prompts, screenshots, repository files or metadata will be sent to a cloud provider.
+- Show listening state and provide mute/pause/quit controls. Local wake-word detection does not mean all transcription, reasoning or speech synthesis is offline.
+- Allowlist local folders, commands and apps. Treat repository instructions, terminal output, web pages, issues, code comments and model responses as untrusted input—not permission to override policy.
+- Do not claim universal control over all apps/sites. Identify unsupported, API-limited, login-gated and human-verification workflows honestly.
+
+### 16.7 Consequence-based action policy
+- Read-only/low risk: inspect an authorized repository, search docs, explain code, run safe tests within granted boundaries.
+- Local reversible edits: create a branch, edit files, format code or generate tests. Show scope and honor configured autonomy.
+- External/shared changes: push commits, open/update PRs, create issues, post comments, deploy, alter cloud resources, change schemas or modify production data. Require explicit approval for the specific action and target; show the diff/plan first.
+- Destructive/high-impact: force-push, delete branches/data, rotate credentials, change permissions, production migrations, spending or public publishing. Default deny; require explicit step-by-step confirmation and recovery plan, and refuse unsafe/unauthorized requests.
+
+Never auto-merge, deploy to production, delete data, publish publicly or submit messages merely because a voice command is ambiguous. Explain effects, affected scope, irreversible parts, costs/downtime, failure modes and recovery before consequential actions.
+
+### 16.8 Acceptance criteria
+- The user can switch projects by voice and see the active repository/path/branch before edits.
+- ULTRON provides an impact plan before changes and can pause for approval.
+- Every code change has a reviewable diff; test claims include actual command/results or say not run.
+- Integration permissions are individually configurable/revocable and external writes have auditable approvals.
+- Recommendations include trade-offs and uncertainty, not infallibility.
+- Failed commands/integrations are reported honestly; destructive actions are not silently retried.
+- Local repositories remain useful when cloud providers are unavailable, with clear disclosure of network-dependent features.
