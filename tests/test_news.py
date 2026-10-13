@@ -56,3 +56,18 @@ def test_handles_network_failures_without_crashing():
     with patch.dict("os.environ", {"NEWS_API_KEY": FAKE_KEY}):
         with patch("news.requests.get", side_effect=requests.RequestException("offline")):
             assert get_headlines() == []
+
+
+def test_handles_unexpected_json_shapes_without_crashing():
+    malformed_payloads = [
+        ["not", "an", "object"],
+        "not an object",
+        {"status": "ok", "articles": "not a list"},
+        {"status": "ok", "articles": [None, "not an article", 42]},
+    ]
+    with patch.dict("os.environ", {"NEWS_API_KEY": FAKE_KEY}):
+        for payload in malformed_payloads:
+            response = Mock()
+            response.json.return_value = payload
+            with patch("news.requests.get", return_value=response):
+                assert get_headlines() == []
