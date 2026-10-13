@@ -22,6 +22,7 @@
 - Last-known head for `m2.2.1-groq-fixes`: `e7789d8a5f78ed12e49a26d233fc260173b20c64`.
 - Preserve all branches and PRs. Remote actions require explicit authorization; report actual GitHub results.
 - Documentation branch `docs/project-foundation-v1` was created from `main` and contains the original six documents, commit `d43552128372338865e1a032cd64e6ea6b6697a4`.
+- Current active branch: `arena/f489501f-jarvis-assistant` (integrating `origin/main` `e7b9ae5286b50bc4c6c292c26ecc8ed928081645`, `origin/m2.2.1-groq-fixes` `e7789d8a5f78ed12e49a26d233fc260173b20c64`, `origin/research/github-account-audit-2026-10-13` `4e4b1e3225417276505557b26e5dee24ef0bc4cb`, and `origin/research/ruflo-review-2026-10-13` `c8cbeae7999075dd56bd36d731305b2ad21b597d`).
 - The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`. The expanded student-life vision is on `docs/student-life-companion-v4`.
 
 ## 3. Architecture summary
@@ -31,10 +32,13 @@
 - Agent allowlist/schemas: `ultron/agent/catalog.py`.
 - Tool contracts: `ultron/tools/base.py`.
 - Central enforcement boundary: `ultron/tools/registry.py`.
+- macOS tools, path validation, bounded subprocess runner: `ultron/tools/macos.py`, `ultron/tools/paths.py`, `ultron/tools/process.py`.
 - Risk/context policy: `ultron/security/policy.py`.
+- Confirmation store, session state, token management, log/tool redaction, secret scanner: `ultron/security/confirmation.py`, `ultron/security/sessions.py`, `ultron/security/session_state.py`, `ultron/security/tokens.py`, `ultron/security/redact.py`, `ultron/security/secret_scan.py`.
 - Authenticated Flask HUD/API: `ultron/api/app.py`.
 - Configuration/credential loading: `ultron/config.py`.
-- Legacy routing/application wiring: `main.py`; integration adapter: `ultron/legacy.py`.
+- Legacy routing/application wiring: `main.py`; integration adapter: `ultron/legacy.py`; CLI entry point: `ultron/cli.py`.
+- Optional local wake-word listener: `wakeword_listener.py`; optional NewsAPI helper: `news.py`.
 - Optional local retrieval: `knowledge.py`; optional vision utilities: `vision.py`.
 
 Do not bypass the registry for state-changing operations. The model proposes calls; runtime validates; policy/registry authorize.
@@ -49,11 +53,12 @@ Do not bypass the registry for state-changing operations. The model proposes cal
 
 These are product requirements; they are not claims that every workflow is already implemented.
 
-## 5. M2.3 reliability work status
+## 5. M2.3 and Phase 2 reliability work status
 
-Arena previously reported an M2.3 patch in an isolated checkout based on `e7789d8a5f78ed12e49a26d233fc260173b20c64`. It reported focused/regression/full tests, Ruff, compileall, secret scan, and clean-checkout patch application. Those results were Arena-reported and not independently rerun on the owner's Mac.
-
-Before applying any such patch: obtain the actual artifact; verify checksum/base; run `git apply --check` against the exact base; inspect the diff; run local tests; get approval for any remote Git mutation.
+On 2026-10-13, `arena/f489501f-jarvis-assistant` integrated `m2.2.1-groq-fixes`, `research/github-account-audit-2026-10-13`, and `research/ruflo-review-2026-10-13`, then completed and verified two engineering batches in the locked `.venv` environment (`uv sync --locked --extra dev`):
+- **Phase 2 external integrations (`main.py`, `tests/test_weather.py`, `tests/test_cricket.py`, `tests/test_web_search.py`, `tests/test_wiki.py`):** fixed the two baseline failures from `research/github-account-audit-2026-10-13` (`test_web_and_document_text_is_never_routed_as_a_command` stub compatibility and `test_repository_has_no_hardcoded_credentials` fixture placeholders), added verified HTTP(S) URL extraction and DuckDuckGo redirect unwrapping to `_ddg_results`/`web.search`, and hardened Wikipedia summary error handling (`DisambiguationError`, `PageError`, empty summaries, network errors, and redaction).
+- **Phase 3 / M2.3 agent runtime hardening (`ultron/security/redact.py`, `ultron/agent/provider.py`, `ultron/agent/runtime.py`, `ultron/cli.py`, `tests/test_agent_loop.py`, `tests/test_groq_provider.py`):** redacted `ULTRON_CLIENT_TOKEN` and tool results/errors before storage or provider transmission, rejected whitespace-only tool names and non-string tool arguments, added stop reasons for early exits and exposed `stop_reason`/`error_code` in `AgentReport.public()`, normalized whitespace for duplicate detection, refused ambiguous side-effecting retries with altered arguments after malformed turns, enforced cancellation/deadline checks between multi-call turns while preserving completed evidence, and prevented false verified completion when read-only or state-changing tools fail.
+- **Verification in Arena sandbox:** `compileall` exit `0`, `ruff check --no-cache .` exit `0`, `python -m ultron check-secrets` exit `0`, and `pytest -p no:cacheprovider -q` → `779 passed, 14 skipped` (the 14 skips are opt-in live OpenAI/Groq tests in `tests/live/test_live_providers.py`, which require live keys and network access on the owner's Mac).
 
 ## 6. Verification boundaries
 

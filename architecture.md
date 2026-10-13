@@ -69,14 +69,17 @@ The task/session coordinator and unified artifact workspace are target architect
 | Component | Current responsibility | Boundary |
 |---|---|---|
 | `main.py` | Legacy router, application wiring, voice entry path, tool construction | No state-changing bypass around registry |
+| `wakeword_listener.py` | Optional local wake-word (`Porcupine`) + speech listener forwarding to `/ask` | Uses client/owner bearer token; never approves actions |
+| `news.py` | Optional NewsAPI headline fetcher (`X-Api-Key` header, payload validation) | Read-only external content; key never placed in URL |
 | `ultron/agent/runtime.py` | Bounded agent loop, validation, ledger, reports, limits, cancellation/concurrency | Model proposes; runtime validates/routes |
 | `ultron/agent/provider.py` | Provider-neutral types and OpenAI/Groq adapters | Provider never executes tools |
 | `ultron/agent/catalog.py` | Reviewed allowlist and model-facing schemas | Being offered is not permission |
 | `ultron/agent/schema.py` | Supported JSON-schema subset | Reject unsupported schemas/invalid arguments |
 | `ultron/tools/base.py` | Tool contract, risk metadata, schema, side-effect/external-content flags | Narrow explicit capabilities |
 | `ultron/tools/registry.py` | Authorization boundary, pending approvals, audit | Authoritative enforcement point |
+| `ultron/tools/macos.py`, `paths.py`, `process.py` | macOS tool implementations, path validation, bounded subprocess runner | Argument arrays (`shell=False`), timeouts, path checks |
 | `ultron/security/policy.py` | Caller context, channels, risk tiers, decisions | Model text/external content cannot grant permission |
-| `ultron/security/confirmation.py`, sessions/tokens | Pending-action confirmation and session/token handling | Approval bound to authorized HUD path |
+| `ultron/security/confirmation.py`, `sessions.py`, `session_state.py`, `tokens.py`, `redact.py`, `secret_scan.py` | Pending-action confirmation, session/token handling, log/tool redaction, secret scanning | Approval bound to authorized HUD path; secrets redacted |
 | `ultron/api/app.py` | Flask HUD/API, authentication, Host/Origin/CSRF protections | Safe defaults and protected requests |
 | `ultron/config.py` | Settings, provider selection, credential access | Secrets from environment/local ignored files |
 | `ultron/legacy.py`, `ultron/cli.py` | Backend and CLI integration | Preserve caller context and policy |
@@ -203,7 +206,7 @@ Bound model turns, tool calls, output size, context, duration, and retries. Neve
 
 Automated tests do not prove real microphone/camera behavior, macOS permissions, live provider stability, third-party retention policy, research correctness, generated-code correctness, or safe behavior of an untested desktop action. Record environment, commit/working-tree state, checks run, skips, and known gaps.
 
-## 11. Trilingual speech pipeline and installable desktop shell (target architecture)
+## 14. Trilingual speech pipeline and installable desktop shell (target architecture)
 
 This section describes the target design, not features that are already verified as implemented.
 
@@ -242,7 +245,7 @@ macOS microphone
 4. Define one RequestContext language preference that survives voice-to-agent-to-speech flow and can be overridden by the user.
 5. Test the packaged app on a clean macOS account, not only a developer checkout.
 
-## 12. Student-life companion architecture (target proposal)
+## 15. Student-life companion architecture (target proposal)
 
 This expands the task layer into bounded, user-controlled workspaces. It is a proposed architecture; it does not assert that the current code already implements these services.
 

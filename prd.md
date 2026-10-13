@@ -137,13 +137,13 @@ Set numeric latency/accuracy goals only after measuring a baseline.
 
 ## 10. Priority order
 
-1. Protect repository and security boundaries; keep the current foundation stable.
-2. Verify runtime reliability and truthful status reporting.
-3. Build reliable Hindi/English/Hinglish voice interaction and local wake-word activation.
-4. Package an installable macOS desktop app while retaining the companion website/HUD.
-5. Build a shared task workspace for assignments, research, coding, and website projects.
-6. Add inspectable project memory and local retrieval.
-7. Improve vision and contextual awareness.
+1. Protect repository and security boundaries; keep the current foundation stable (implemented and deterministically verified in M1–M2.3).
+2. Verify runtime reliability, external-source provenance, and truthful status reporting (implemented and deterministically verified; live-provider re-verification pending on the owner's Mac).
+3. Build reliable Hindi/English/Hinglish voice interaction and local wake-word activation (planned).
+4. Package an installable macOS desktop app while retaining the companion website/HUD (planned; Flask HUD/API is implemented).
+5. Build a shared task workspace for assignments, research, coding, and website projects (planned).
+6. Add inspectable project memory and local retrieval (legacy `memory.json` and optional `knowledge.py` exist; structured project memory is planned).
+7. Improve vision and contextual awareness (optional `vision.py` utilities exist; not strong authentication).
 8. Expand automation only when useful, testable, and authorized.
 
 ## 11. Definition of done
