@@ -302,3 +302,24 @@ All phases use the project's [development workflow](docs/development-workflow.md
 6. **Integration gate:** present integration choices and wait for explicit approval before remote pushes, merges, deployments, destructive operations, or publication.
 
 Passing deterministic tests does not prove live provider, microphone, speech, camera, or macOS automation behavior. Keep hardware/live acceptance checks explicit.
+
+
+## 18. Quality and retrieval evaluation gate — 2026-10-13
+
+**Gate A — before broadening the agent runtime**
+- [ ] Add a compact deterministic regression suite for malformed tool calls, policy bypass attempts, retry/idempotency, cancellation and budgets, and evidence-backed completion status.
+- [ ] Add source-fidelity/citation fixtures for study and research tasks.
+- [ ] Keep optional model-graded and live-provider evaluations separate from the default deterministic test suite.
+- [ ] Record baseline results before changing the runtime or adopting new orchestration.
+
+**Gate B — before upgrading retrieval**
+- [ ] Assemble a small representative corpus of notes, question banks, and project docs with query/expected-evidence fixtures.
+- [ ] Measure current retrieval coverage/relevance, citation support, unsupported-answer rate, and latency.
+- [ ] Compare keyword, semantic, and hybrid retrieval under the same conditions; evaluate reranking only after baseline comparison.
+- [ ] Decide based on repeatable benefit, acceptable Mac resource use, privacy, and maintenance cost.
+
+**Gate C — before advanced architecture**
+- [ ] Only consider vector-store migration, knowledge graphs, multi-agent research, or extra external services when an observed workload exposes a specific limitation.
+- [ ] Document measured benefit, new failure modes, cost, rollback, license, and data-flow implications.
+
+These are proposed exit criteria, not claims of completed implementation. Full rationale: [awesome-llm-apps review](docs/research/awesome-llm-apps-review.md).
