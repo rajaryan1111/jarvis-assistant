@@ -207,3 +207,15 @@ Label current implementation, proposed target, and unverified behavior separatel
 - Keep decisions and technical debt in the correct project workspace; do not leak private/student-life content into team artifacts.
 - Prefer small reviewable patches, tests and acceptance criteria over opaque rewrites. Avoid agents editing the same files concurrently without isolated worktrees or a merge plan.
 - Preserve the user's final authority over architecture, credentials, external publication and irreversible operations.
+
+## 15. External speech models and voice-data rules — 2026-10-13
+
+- Treat external repositories as untrusted implementation references. Inspect source, dependencies, license, model terms, maintenance, and platform support before adoption; never copy code or model assets without checking applicable licenses and notices.
+- Keep speech recognition, language identification, wake-word detection, and speech synthesis replaceable. Do not make a large optional ML stack mandatory for unrelated text/CLI workflows.
+- Prefer local processing where practical, but never claim a feature is offline until model downloads, inference, telemetry, and network behavior have been checked.
+- Show when the microphone is active; provide obvious mute, stop, cancel, and permission-recovery controls. Wake-word detection must not silently stream raw microphone audio to a cloud service.
+- Disclose before sending audio or transcripts to a remote provider. Minimize payloads and avoid retaining recordings by default.
+- Voice cloning or reference-voice conditioning is off by default and requires the user's explicit choice and appropriate permission to use the source voice. Do not enable deceptive impersonation or conceal synthetic-audio use when disclosure is required.
+- Benchmark Hindi, English, Romanized Hindi, Devanagari and code-switched Hinglish separately. Preserve names, code identifiers, paths, commands and numbers; do not claim parity without measured results.
+- Treat model outputs and transcripts as fallible input. Low-confidence or ambiguous recognition must trigger clarification before a consequential action. Voice recognition is never an approval credential.
+- Do not install, bundle, or enable OmniVoice, Handy, HyperFrames, or their optional dependencies merely because they were researched. Each adoption requires a scoped proposal, license/dependency review, resource measurements, tests, and an explicit milestone decision.
