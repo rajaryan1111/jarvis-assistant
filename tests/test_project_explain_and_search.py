@@ -489,7 +489,7 @@ def test_explain_and_search_never_modify_files_or_execute_code(tmp_path, fake_ru
     assert fake_runner.calls == []
 
 
-# ============================================================ 14. encoded traversal is never decoded into filesystem access
+# 14. Encoded traversal must never become filesystem access.
 @pytest.mark.parametrize(
     "encoded_path",
     [
