@@ -372,3 +372,10 @@ Keep the voice pipeline modular rather than adopting an external desktop applica
 Repository changes use a repeatable development loop: inspect current branch and working tree; identify existing behavior and acceptance criteria; plan exact files/interfaces/tests for non-trivial work; implement through a verified test-first cycle; review the resulting diff; and report fresh evidence. Bugs require root-cause investigation and a reproducible failing test where feasible. Independent tasks may be isolated in separate branches/worktrees; shared files and coupled changes stay together.
 
 This workflow does not create a second runtime policy system. Runtime authorization remains in the existing security policy and tool registry. Development instructions are documented in [AGENTS.md](AGENTS.md) and [docs/development-workflow.md](docs/development-workflow.md). External Superpowers skills may inspire the process but are not runtime dependencies.
+
+
+## 20. External integrations: adapter, evidence, and failure contracts — 2026-10-13
+
+External integrations must sit behind existing tool/provider interfaces, not inside the agent loop. A source adapter should define bounded request timeout, response/payload limits, rate-limit behavior, retry classification, schema validation, freshness semantics, and a structured result/error contract. Use bounded backoff and respect Retry-After when provided; do not retry non-retryable failures or repeat uncertain state-changing actions blindly.
+
+For research results, preserve source URL, retrieved-at timestamp, publication/update time when known, evidence reference, and status. Distinguish empty, blocked, stale, invalid, failed, and verified. Use fixtures for deterministic tests; do not make normal CI depend on live APIs. Source-specific details and candidate APIs are documented in [GitHub account audit](docs/research/github-account-audit-2026-10-13.md).
