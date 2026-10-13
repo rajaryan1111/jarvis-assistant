@@ -116,6 +116,8 @@ Exit criteria: cross-interface authorization tests; reproducible setup on a supp
 
 Priorities change only with an explicit decision recorded in `memory.md` and reflected here. Code generation alone does not complete a phase. No commit, push, merge, branch mutation, PR change, or deployment without explicit authorization.
 
+The student-life phases 11–16 are expansion phases after the trilingual desktop foundation and core workspace. Do not implement all domains at once; validate one workflow and its privacy boundaries before proceeding.
+
 ## Phase 2A — Trilingual voice and wake-word prototype
 
 **Goal:** Make Hindi, English, and Hinglish reliable first-class spoken languages and support hands-free activation.
@@ -157,3 +159,51 @@ Exit criteria:
 Work: run cross-interface tests for language preference, task continuity, permissions, wake-word activation, cancellation, approvals, provider failures, and recovery; test a clean install; document supported macOS versions and known language limits.
 
 Exit criteria: reproducible test checklist, measured trilingual voice results, clean installer lifecycle, and no authorization bypass across desktop/website paths.
+
+## Phase 11 — Student workspace and study companion
+
+**Goal:** Make the core useful across the real BTech study cycle.
+
+Work: workspace records for courses and projects; notes/PDF/question-bank intake; source-grounded answers; syllabus/topic map; deadlines and a study checklist; quiz/revision workflows; inspect/correct/delete saved memory.
+
+Exit criteria: source fidelity tests; realistic plan revision; private workspace retention controls; task cancellation/resumption tests; no fabricated source or completion claims.
+
+## Phase 12 — Engineering project and hackathon copilot
+
+**Goal:** Support mixed CSE/ECE teams from idea through evidence-backed demo.
+
+Work: project requirements and budget; challenge/deadline/team constraints; MVP and task dependencies; repository-aware code changes; electronics datasheet/circuit/firmware workflows; integration checklist; test/simulation/hardware evidence; demo and pitch practice.
+
+Exit criteria: plan reflects actual time/budget/team constraints; work ownership is explicit; code and hardware verification levels are distinguished; all test results are accurately reported; no remote Git mutation without authorization.
+
+## Phase 13 — Career and research workflows
+
+**Goal:** Help students develop demonstrable skills and make informed next-step decisions.
+
+Work: role exploration; skill-gap matrix; interview practice; truthful resume/portfolio review; internship/opportunity tracker; source-aware literature review; citation and experiment provenance.
+
+Exit criteria: no fabricated credentials/citations/results; assumptions and uncertainty are visible; deadlines can be inspected and reminders cancelled; opportunity data has traceable sources when sourced externally.
+
+## Phase 14 — Productivity and life administration
+
+**Goal:** Help users manage time and practical responsibilities without over-optimizing their lives.
+
+Work: user-controlled calendar/reminders; deadline prioritization; budget and trip planning; hostel/life checklists; time-aware rescheduling; weekly reflection.
+
+Exit criteria: reminders are opt-in, visible and cancellable; plans respect user constraints; budgets show assumptions; no external transaction without explicit approval.
+
+## Phase 15 — Private social and well-being support
+
+**Goal:** Offer empathetic, bounded support for loneliness, friendship, dating, breakups, stress and confidence.
+
+Work: listen/reflect/plan modes; conversation rehearsal; respectful message drafts; consent and boundary prompts; optional private journaling/check-ins; supportive signposting to trusted people/professionals where appropriate.
+
+Exit criteria: private data stays out of shared workspaces; no diagnosis, emotional manipulation, dependency-building or claims about others' hidden feelings; no stalking/coercion assistance; user can disable/delete personal data; appropriate escalation behavior is reviewed.
+
+## Phase 16 — Accessibility, creativity and life transitions
+
+**Goal:** Adapt learning and workflows to different needs and support interests beyond coursework.
+
+Work: alternate explanation formats; accessible text/voice interaction; presentation/public-speaking practice; creative project support; life-after-college option comparisons.
+
+Exit criteria: user-controlled preferences; accessible fallback when voice fails; career/life advice is transparent about assumptions and does not guarantee outcomes.
