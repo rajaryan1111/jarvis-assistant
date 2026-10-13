@@ -115,3 +115,45 @@ Exit criteria: cross-interface authorization tests; reproducible setup on a supp
 ## Change control
 
 Priorities change only with an explicit decision recorded in `memory.md` and reflected here. Code generation alone does not complete a phase. No commit, push, merge, branch mutation, PR change, or deployment without explicit authorization.
+
+## Phase 2A — Trilingual voice and wake-word prototype
+
+**Goal:** Make Hindi, English, and Hinglish reliable first-class spoken languages and support hands-free activation.
+
+Work:
+- Trace the existing mic → speech recognition → router/runtime → response → speech path.
+- Add per-utterance language/script detection and user override; cover Hindi, English, Hinglish, Romanized Hindi, and Devanagari.
+- Prototype local wake-word detection for “Ultron”; add visible listening state, mute/quit, cancellation, and false-wake recovery.
+- Measure language-specific recognition quality, wake latency, false activations, idle resource use, and cloud/network behavior.
+
+Exit criteria:
+- A documented evaluation set and results exist for all three languages and both Hindi scripts.
+- Wake-word listening does not require a browser and does not upload idle audio solely for detection.
+- Protected actions still require trusted HUD approval; speech alone cannot approve.
+- Hardware tests are performed on the target Mac; mocks are not described as hardware validation.
+
+## Phase 6A — Installable macOS application
+
+**Goal:** Let the owner install and launch ULTRON as a laptop app, independent of manually opening a browser.
+
+Work:
+- Choose packaging after inventorying the existing Python runtime and Flask HUD; prefer a minimal shell over a wholesale rewrite.
+- Package runtime/dependencies, lifecycle management, microphone permission guidance, status, mute, quit, logs, upgrade and uninstall.
+- Add optional launch-at-login only with explicit opt-in.
+- Share the same task context and security policy with the website/HUD.
+- Keep the companion website for typed interaction, visual task review, settings, artifacts, and secure approvals.
+
+Exit criteria:
+- Clean install/launch/upgrade/uninstall checks pass on a supported macOS version.
+- Saying “Ultron” activates a session with no browser manually opened.
+- The user can tell whether ULTRON is idle, listening, processing, speaking, muted, or failed.
+- Website and desktop app use the same runtime/policy, and local APIs are not exposed to the LAN by default.
+- Documentation clearly distinguishes offline capabilities from cloud-dependent capabilities.
+
+## Phase 10A — Trilingual desktop/web release validation
+
+**Goal:** Verify the combined product before calling it ready.
+
+Work: run cross-interface tests for language preference, task continuity, permissions, wake-word activation, cancellation, approvals, provider failures, and recovery; test a clean install; document supported macOS versions and known language limits.
+
+Exit criteria: reproducible test checklist, measured trilingual voice results, clean installer lifecycle, and no authorization bypass across desktop/website paths.
