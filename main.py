@@ -304,6 +304,7 @@ def play_youtube(query: str, ctx: CommandContext = None) -> str:
     search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
     try:
         res = requests.get(search_url, timeout=5)
+        res.raise_for_status()
         video_ids = re.findall(r"watch\?v=([\w-]{11})", res.text)
         url = "https://www.youtube.com/watch?v=" + video_ids[0] if video_ids else search_url
         reply = f"Playing {query} on YouTube."
