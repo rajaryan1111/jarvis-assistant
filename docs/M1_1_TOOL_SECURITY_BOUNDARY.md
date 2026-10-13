@@ -103,6 +103,8 @@ enabled), or *user / internal* (also the listed background service).
 | `weather.current` | OBSERVE | agent loop (M2.0) | any | no | OpenWeather, 5 s timeout, city pattern; **external content** | G |
 | `news.headlines` | OBSERVE | agent loop (M2.0) | any | no | NewsAPI (key in a header); **external content** | G |
 | `project.inspect` | OBSERVE | agent loop (Phase 5) | any | no | read-only summary of authorized project root (`ULTRON_PROJECT_ROOT` or repo root), bounded depth/size, skips secrets/symlinks; **external content** | B, P, G |
+| `project.explain` | OBSERVE | agent loop (Phase 6) | any | no | read-only AST/structural explanation of a file or symbol inside the authorized project root with line citations; **external content** | B, P, G |
+| `project.search` | OBSERVE | agent loop (Phase 6) | any | no | read-only bounded literal/symbol/definition/import search inside the authorized project root; skips secrets/symlinks/binaries; **external content** | B, P, G |
 | `system.cpu_temperature` | OBSERVE | "temperature", "status report" | any | no | runs `osx-cpu-temp` from fixed Homebrew paths only (no `PATH`), 5 s timeout | B, P |
 | `audio.speak` | ROUTINE | every CLI reply, `POST /speak`, reminder and intruder alerts | user / internal (reminder + intruder watchers) | no | `/usr/bin/say`, leading-`-` guard, 4000-char cap, timeout | B, P |
 | `apps.open` | ROUTINE | "open <app>" | user | no | `/usr/bin/open -a <name>`; name must match a strict pattern (no `/`, no leading `-`, ≤ 64 chars) | B, P |

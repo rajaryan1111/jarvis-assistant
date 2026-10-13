@@ -63,7 +63,9 @@ Exit criteria:
 
 **Goal:** Make repository-aware coding and debugging safe and repeatable.
 
-Work: repository inspection (`project.inspect` in `ultron/tools/project.py` with path confinement in `ultron/tools/paths.py`, implemented and tested in `tests/test_project_inspect.py`); error/log analysis; small patch workflow; test selection; diff review; dependency/environment diagnostics; branch/base checks; artifact summaries.
+Work:
+- **Implemented and tested:** read-only repository inspection (`project.inspect`), source file/symbol explanation (`project.explain`), and bounded repository search (`project.search`) in `ultron/tools/project.py` with path confinement and sensitive-file filtering in `ultron/tools/paths.py`, verified by `tests/test_project_inspect.py` and `tests/test_project_explain_and_search.py`.
+- **Planned (not yet implemented as agent tools):** automated error/log analysis, scoped patch/edit tools, automated test-runner/diff-review tools, and dependency/environment diagnostic tools.
 
 Exit criteria:
 - Branch, HEAD, and working tree are checked before edits.

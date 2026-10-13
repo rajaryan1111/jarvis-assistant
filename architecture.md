@@ -77,7 +77,7 @@ The task/session coordinator and unified artifact workspace are target architect
 | `ultron/agent/schema.py` | Supported JSON-schema subset | Reject unsupported schemas/invalid arguments |
 | `ultron/tools/base.py` | Tool contract, risk metadata, schema, side-effect/external-content flags | Narrow explicit capabilities |
 | `ultron/tools/registry.py` | Authorization boundary, pending approvals, audit | Authoritative enforcement point |
-| `ultron/tools/macos.py`, `paths.py`, `process.py`, `project.py` | macOS tool implementations, path confinement/sensitive-file filters, bounded subprocess runner, read-only `project.inspect` tool | Argument arrays (`shell=False`), timeouts, canonical root confinement, `O_NOFOLLOW`, sensitive-file exclusion |
+| `ultron/tools/macos.py`, `paths.py`, `process.py`, `project.py` | macOS tool implementations, path confinement/sensitive-file filters, bounded subprocess runner, read-only `project.inspect`, `project.explain`, and `project.search` tools | Argument arrays (`shell=False`), timeouts, canonical root confinement, `O_NOFOLLOW`, sensitive-file exclusion |
 | `ultron/security/policy.py` | Caller context, channels, risk tiers, decisions | Model text/external content cannot grant permission |
 | `ultron/security/confirmation.py`, `sessions.py`, `session_state.py`, `tokens.py`, `redact.py`, `secret_scan.py` | Pending-action confirmation, session/token handling, log/tool redaction, secret scanning | Approval bound to authorized HUD path; secrets redacted |
 | `ultron/api/app.py` | Flask HUD/API, authentication, Host/Origin/CSRF protections | Safe defaults and protected requests |
@@ -123,6 +123,21 @@ The coordinator should not become a second authorization system. Every action st
 4. Run checks in the available environment; label unrun or platform-specific checks.
 5. Review diff, generated/untracked files, and secrets; summarize exact results.
 6. Do not commit/push/merge or modify PRs unless separately authorized.
+
+#### Implemented read-only coding-partner tools (`ultron/tools/project.py` + `ultron/tools/paths.py`)
+- **`project.inspect` (`RiskTier.OBSERVE`, `external_content=True`):**
+  - Schema: `{"path"?: string (1..240)}` — e.g. `{}` or `{"path": "ultron/tools"}`.
+  - Summarizes project root, directory tree (`max_depth=2`, `max_entries=60`), permitted documentation (`README*`, `AGENTS.md`, `SECURITY.md`, planning docs), stack/entry points/check commands from `pyproject.toml`/`requirements.txt`/`package.json`/`Cargo.toml`/`go.mod`, and read-only Git branch/working-tree status (`git --no-optional-locks -C <target> status --porcelain=v1 --branch`).
+- **`project.explain` (`RiskTier.OBSERVE`, `external_content=True`):**
+  - Schema: `{"path": string (1..240), "symbol"?: string (1..120)}` — e.g. `{"path": "main.py", "symbol": "build_tool_registry"}` or `{"path": "ultron/tools/registry.py", "symbol": "ToolRegistry.request"}`.
+  - Parses Python files with `ast.parse` (`max_ast_nodes=8000`, `max_symbols=30`, `max_related_files=8`, `max_file_bytes=65536`, `max_duration=5.0s`) and uses line-based structural scanning for non-Python text files. Returns `observed` facts (line ranges, parameters, return annotations/expressions, AST calls, raised exceptions, resolved local module connections, numbered excerpt), clearly labeled `inferred` notes, `execution_flow`, and `citations`. Falls back safely on Python `SyntaxError` without fabricating behavior.
+- **`project.search` (`RiskTier.OBSERVE`, `external_content=True`):**
+  - Schema: `{"query": string (1..160), "path"?: string (1..240), "mode"?: "auto"|"literal"|"symbol"|"definition"|"import", "extension"?: string (1..24), "case_sensitive"?: boolean, "max_results"?: integer (1..50)}` — e.g. `{"query": "ToolRegistry", "mode": "symbol", "extension": ".py"}`.
+  - Scans confined files (`max_files=200`, `max_total_bytes=2000000`, `max_file_bytes=65536`, `max_results=20` up to `50`, `max_depth=6`, `max_duration=5.0s`), returning 1-based line/column numbers, match kind, redacted excerpt, and explicit partial-result status (`truncated=True`, `stop_reason`) whenever any limit or deadline is reached.
+- **Permission, confinement, and capability boundaries (what these tools cannot do):**
+  - Confined strictly to `resolve_project_root` (`ULTRON_PROJECT_ROOT` or repository root); reject `..` traversal, absolute paths, `~`, and symlinks (`O_NOFOLLOW`).
+  - Never read `.env*`, private keys, tokens, credentials, databases, binary files, or ignored directories (`.git`, `.venv`, `node_modules`, `__pycache__`, `faces`).
+  - Never modify files, execute repository code, run arbitrary shell commands, install dependencies, access the network, or grant permissions (all outputs carry `external_content=True` taint).
 
 ### Website/app workflow
 1. Capture audience, content, core flow, device targets, visual direction, and acceptance criteria.

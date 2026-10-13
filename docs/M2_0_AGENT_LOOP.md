@@ -102,7 +102,7 @@ registers a new tool and shows that it is offered and used with no other change.
 
 | Tier | Offered tools |
 |---|---|
-| OBSERVE (read-only) | `time.now`, `system.status`, `system.cpu_temperature`, `reminders.list`, `memory.list_notes`, `web.search`*, `wiki.summary`*, `weather.current`*, `news.headlines`*, `project.inspect`* |
+| OBSERVE (read-only) | `time.now`, `system.status`, `system.cpu_temperature`, `reminders.list`, `memory.list_notes`, `web.search`*, `wiki.summary`*, `weather.current`*, `news.headlines`*, `project.inspect`*, `project.explain`*, `project.search`* |
 | ROUTINE (reversible) | `memory.add_note`, `reminders.add`, `apps.open`, `web.open_url`, `system.set_volume`, `system.brightness` |
 
 \* `external_content=True`: the result contains outside text (see §6).
