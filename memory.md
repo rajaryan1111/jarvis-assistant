@@ -1,6 +1,6 @@
 # Jarvis / ULTRON — Project Memory and Handoff
 
-**Last updated:** 2026-10-13 (v3 requirements update)  
+**Last updated:** 2026-10-13 (v5 project-copilot requirements)  
 **Purpose:** Concise handoff log; source code and Git history remain authoritative.
 
 ## 1. Approved product direction
@@ -130,3 +130,29 @@ These are product requirements and proposed workflows, not claims that the curre
 4. Add opt-in reminders and life-administration tools.
 5. Add private social/well-being support modes with strong privacy and safety boundaries.
 6. Expand accessibility, creativity and post-college decision support.
+
+## 14. New project-first voice copilot requirements — 2026-10-13
+
+The approved direction is to make ULTRON a local-first, voice-driven project partner for a BTech student managing many CSE/ECE and interdisciplinary projects. The desired role is a capable senior-engineer mentor: help plan, implement, debug, test, review, document and present work; maintain scoped context per repository; explain consequences, alternatives, trade-offs, failure modes, verification and rollback before important decisions.
+
+Target integrations include local Git/repositories, GitHub, terminal/IDE, Supabase, ChatGPT/Codex, Claude, Antigravity and other coding-related tools/sites. Connect through supported APIs, CLIs, MCP servers or documented interfaces first. Website access alone is not a verified integration, and no universal-control promise should be made. Browser automation must be visible and permitted; never bypass CAPTCHA, MFA, access controls or service rules.
+
+Local-first means the orchestrator, permission policy, project context and secret handling should run locally where practical. It does not imply every model, speech or provider feature is offline. Use least privilege, OS-backed secret storage, workspace boundaries, minimal outbound context, and clear indicators for microphone, cloud processing and external actions.
+
+Every consequential action needs a consequence-aware workflow: identify exact project/branch/account/environment; preview plan and diff; explain risks and recovery; request action-specific approval for external writes and high-impact operations; then verify with actual evidence. No automatic merge, production deployment, destructive database change or force-push by default. Preserve the user's final authority and existing work.
+
+The six-document set now includes this target specification in prd.md, architecture.md, rules.md, phases.md and design.md; this file records handoff and sequencing. These are requirements/roadmap, not claims that integrations or behavior are implemented. Each adapter must be labelled planned, prototype, verified or unavailable and tested against its real target before advertised as working.
+
+## 15. Recommended implementation sequence for the project copilot
+
+1. Validate existing runtime and desktop/web architecture; keep main and existing PRs untouched.
+2. Implement local project switching and read-only repository/Git analysis with explicit workspace roots.
+3. Add mentor report, consequence/impact plans, evidence ledger and visible approval UI.
+4. Add bounded local edits, isolated worktrees, safe command execution, test evidence and diff review.
+5. Add GitHub read capabilities, then separately approval-gated writes.
+6. Add and verify provider adapters individually (Codex/ChatGPT, Claude, Antigravity) using supported interfaces and minimal context.
+7. Add Supabase read/staging workflows before production-capable operations.
+8. Add visible browser automation only for permitted workflows lacking a suitable API.
+9. Run security, privacy, reliability and target-Mac release validation before claiming product readiness.
+
+Do not build a single unrestricted “AI can control everything” shell. Build a modular tool ecosystem with one policy gate, scoped permissions, reviewable plans and auditable outcomes.
