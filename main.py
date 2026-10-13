@@ -334,7 +334,12 @@ def _weather_report(city: str) -> ToolResult:
             return ToolResult(False, f"Weather data for {city} was incomplete.")
         raw_temp = main_data.get("temp")
         desc = conditions[0].get("description") if isinstance(conditions[0], dict) else None
-        if isinstance(raw_temp, bool) or not isinstance(raw_temp, (int, float)) or not isinstance(desc, str) or not desc.strip():
+        if (
+            isinstance(raw_temp, bool)
+            or not isinstance(raw_temp, (int, float))
+            or not isinstance(desc, str)
+            or not desc.strip()
+        ):
             return ToolResult(False, f"Weather data for {city} was incomplete.")
         temp = int(raw_temp)
         desc = desc.strip()
