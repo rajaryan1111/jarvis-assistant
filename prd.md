@@ -322,3 +322,20 @@ Never auto-merge, deploy to production, delete data, publish publicly or submit 
 - Recommendations include trade-offs and uncertainty, not infallibility.
 - Failed commands/integrations are reported honestly; destructive actions are not silently retried.
 - Local repositories remain useful when cloud providers are unavailable, with clear disclosure of network-dependent features.
+
+## 17. Voice stack research and adapter evaluation — 2026-10-13
+
+Review of external projects identified two relevant evaluation candidates and one optional project-demo tool:
+
+- **Speech input reference — Handy** (https://github.com/cjpais/handy, MIT): use its offline-first transcription UX, VAD, configurable push-to-talk, local model selection, visible recording state, cancellation, and graceful failure as design references. Do not assume Handy is integrated into ULTRON.
+- **Speech output candidate — OmniVoice** (https://github.com/k2-fsa/OmniVoice, Apache-2.0): evaluate as an optional multilingual TTS adapter for Hindi, English, and Hinglish, including technical terms and code-switching. Do not make it the default until tested on target Apple Silicon for quality, latency, memory, install size, and offline behavior.
+- **Optional demo media — HeyGen HyperFrames** (https://github.com/heygen-com/hyperframes, Apache-2.0): consider only for future project-demo or pitch-video generation if requested. It is not a core assistant dependency. The originally supplied URL https://github.com/heygen-comP did not identify a specific repository.
+
+### Acceptance criteria for a speech-engine decision
+- Keep STT, language identification, VAD, wake-word detection, and TTS as separate replaceable capabilities.
+- Benchmark Hindi, English, Romanized Hindi, Devanagari, and code-switched Hinglish with a repeatable, user-approved test set.
+- Measure real target-Mac latency, memory/resource use, install footprint, model download needs, and behavior without network access.
+- Compare transcription errors and spoken pronunciation for technical identifiers, filenames, commands, numbers, and mixed-language sentences.
+- Record model/repository versions, license and model terms, test conditions, results, and limitations before selecting a default.
+- Voice cloning is disabled by default; require explicit user choice and lawful permission for any reference voice. Do not upload reference audio without a clear disclosure and approval.
+- These are evaluation requirements, not claims that either project has been integrated or validated in ULTRON.
