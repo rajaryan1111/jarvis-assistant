@@ -22,7 +22,7 @@
 - Last-known head for `m2.2.1-groq-fixes`: `e7789d8a5f78ed12e49a26d233fc260173b20c64`.
 - Preserve all branches and PRs. Remote actions require explicit authorization; report actual GitHub results.
 - Documentation branch `docs/project-foundation-v1` was created from `main` and contains the original six documents, commit `d43552128372338865e1a032cd64e6ea6b6697a4`.
-- The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`.
+- The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`. The expanded student-life vision is being added on `docs/student-life-companion-v4`.
 
 ## 3. Architecture summary
 
@@ -96,3 +96,37 @@ The product direction now explicitly requires:
 4. Carry language preference through recognition, runtime, and speech output.
 5. Package the existing runtime/HUD into a macOS app with clean lifecycle; retain the website as a companion.
 6. Validate install, permissions, wake word, Hindi/English/Hinglish quality, and shared policy on the actual Mac.
+
+## 11. Expanded BTech student-life product vision — 2026-10-13
+
+ULTRON's approved target vision includes the broader BTech journey for CSE and ECE students, not just coding and voice chat. Proposed domains:
+1. Academics/exams: source-grounded notes, question banks/PYQs, revision, quizzes, viva and backlog preparation.
+2. CSE engineering: DSA, software projects, APIs, databases, AI/ML, testing and deployment.
+3. ECE engineering: circuits, electronics, microcontrollers, embedded systems, HDL/FPGA, DSP, sensors and hardware debugging.
+4. Hackathons/teams: idea selection, time/budget-aware MVP, task owners, integration, demo and pitch preparation.
+5. Career/placements: skill-gap plans, interviews, truthful resumes/portfolios, internships and deadlines.
+6. Research: literature review, provenance, citations, datasets and reproducible experiments.
+7. Productivity/life admin: schedule, reminders, budget, hostel routines, travel and forms.
+8. Personal/social: loneliness, friendships, dating, breakups, communication, confidence and bounded well-being support.
+9. Creativity/accessibility/life transitions: hobbies, presentations, alternate learning formats and post-college decisions.
+
+These are product requirements and proposed workflows, not claims that the current implementation already has them. Every domain needs acceptance tests, clear evidence of completion, privacy controls and bounded scope.
+
+## 12. Student-life trust requirements
+
+- Keep private reflection and relationship conversations separate from shared projects.
+- Memory, reminders, mood check-ins, calendar/finance integrations and external sharing are opt-in and revocable.
+- Support empathetic conversation without pretending to be human or replacing trusted people/professionals.
+- Do not foster emotional dependency, diagnose, infer others' hidden feelings, assist stalking/manipulation, fabricate academic/research evidence, or guarantee placements.
+- For hardware, distinguish theory/simulation from physical verification; for code, report actual tests.
+- Let the user choose whether they want listening, explanation, planning or action.
+- Budget calculations show assumptions; external transactions require explicit authorization.
+
+## 13. Suggested roadmap after desktop/trilingual foundation
+
+1. Build inspectable course/project workspaces and source-grounded study workflows.
+2. Add project/hackathon planning and CSE/ECE evidence-aware build/test flows.
+3. Add career/research workflows.
+4. Add opt-in reminders and life-administration tools.
+5. Add private social/well-being support modes with strong privacy and safety boundaries.
+6. Expand accessibility, creativity and post-college decision support.
