@@ -207,3 +207,46 @@ For dating/relationship questions, help the user communicate honestly and respec
 - Make check-ins, reminders, calendar access, budget tracking and external integrations opt-in.
 - Do not optimize every day solely for output; rest and social time count.
 - Clearly show what is stored, what leaves the device, and what is deleted.
+
+## 15. Project-first voice cockpit and senior-mentor experience
+
+### 15.1 Natural command, visible target
+The user can say “Ultron, switch to my Jarvis repo,” “explain the latest PR,” or “find why these tests fail.” The HUD always displays active project, repository path, branch, selected provider, local/cloud status and whether the operation is read-only or mutating. If the target is ambiguous, ask before acting.
+
+Voice is the fast path, not the only path. The user can inspect/edit the plan, review diffs, approve/deny, cancel a task or continue by keyboard. Give concise spoken updates; put detailed logs and large diffs in the HUD.
+
+### 15.2 Project cockpit
+Show current goal, stack, architecture, branch, open tasks, blockers, deadlines, next recommended action, recent commits/PRs and actual CI/test state, decisions, bugs, technical debt, current plan, affected files, progress, tool/provider activity, evidence, privacy boundary and active integration grants.
+
+Keep a distinct workspace per project. Cross-project search is explicit and visible.
+
+### 15.3 Mentor mode: think like a senior engineer
+For a significant decision, show:
+1. Recommendation and project-specific reason.
+2. Evidence, constraints and assumptions.
+3. Alternatives and when they might be better.
+4. Consequences for cost, complexity, reliability, security, privacy, performance, maintainability and lock-in.
+5. Likely failure modes and warning signs.
+6. Verification through tests, measurements, sources or a small experiment.
+7. Recovery/rollback plan and its limits.
+8. One practical next move matched to the user's goal and deadline.
+
+Offer quick answer, mentor explanation and deep technical review levels. Be candid about risky or overcomplicated ideas without talking down to the user.
+
+### 15.4 Safe build loop
+Show progress: **Understand → Plan → Preview impact → Approve if needed → Implement → Verify → Review diff → Handoff**. Allow pause after each stage. Final handoff lists changed files, commands run, tests passed/failed/skipped/not run, external calls, remaining risks and next step. Never claim tests passed without evidence.
+
+### 15.5 Connected tools panel
+Show individual cards for local Git/repositories, GitHub, terminal/IDE, Supabase, ChatGPT/Codex, Claude, Antigravity and other connectors. Each card shows supported capabilities, read/write scope, connection state, credential status without revealing secrets, last verification date, outbound data and revoke/disconnect control. Distinguish “website can be opened” from “API/CLI integration verified.”
+
+For multi-agent work, assign bounded roles (planner, implementer, reviewer, tester, documentation) and choose the context each provider may receive. Surface reviewer disagreements with evidence rather than hiding them behind a single confidence score.
+
+### 15.6 Approval and consequence preview
+Before external writes or high-impact local changes, show exact target/account/environment, action, expected side effects, resources affected, cost/downtime if known, irreversible parts, validation and recovery. Approval controls should be specific, such as “Approve this push to branch X,” not generic “Continue.” High-impact approval requires visible confirmation. If plan/target changes, ask again.
+
+Provide dry-run, cancel, stop, safe retry and rollback controls where supported. Do not imply rollback can undo an externally visible action when it cannot.
+
+### 15.7 Trustworthy local-first status
+Distinguish “On this Mac” (local files/Git, allowlisted commands, project index, policy/approval), “Sent to provider” (named AI service and context shared), and “External effect” (service read or changed).
+
+Show microphone/wake-word state continuously. Local orchestration/wake-word detection does not guarantee cloud speech recognition, AI reasoning or speech synthesis is offline.
