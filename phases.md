@@ -271,3 +271,46 @@ Exit criteria: no security-control or service-policy bypass; user can stop autom
 Work: adapter contract tests; fault injection; timeout/rate-limit handling; idempotency; audit log; permission revocation; backup/recovery drills; offline behavior; privacy/security review; real macOS packaging and microphone tests.
 
 Exit criteria: each integration marked planned/prototype/verified/unavailable; failures never masquerade as success; cancellation/recovery tested; high-impact approvals reviewed; macOS validated on target hardware.
+
+## Research-informed voice-stack evaluation — 2026-10-13
+
+This is a scoped evaluation task supporting Phases 2/2A and desktop packaging; it does not change phase numbering or claim implementation.
+
+### Candidates
+- **Handy** (MIT): reference for offline transcription UX, VAD, configurable push-to-talk, local STT model choices, cancellation and cross-platform desktop integration. First evaluate its architecture and documented interfaces; do not assume it will be embedded.
+- **OmniVoice** (Apache-2.0): optional multilingual TTS candidate. Test Hindi/English/Hinglish and technical pronunciation on the actual Apple Silicon Mac before deciding whether to add an adapter.
+- **HeyGen HyperFrames** (Apache-2.0): optional future project-demo/pitch-video tool only; not part of the core voice milestone. The provided heygen-comP URL did not identify a specific repository; HyperFrames is a possible intended source and must not be treated as confirmed intent.
+
+### Evaluation exit criteria
+- Written comparison against the current speech path, with versions, license/model terms, dependencies and maintenance notes.
+- Repeatable STT/TTS test set covering Hindi, English, Romanized Hindi, Devanagari, code-switching, technical words, paths, numbers and noisy/quiet speech.
+- Measurements on target Mac: cold start, per-utterance latency, real-time factor where applicable, peak memory, install/model size, network requirements and offline behavior.
+- Failure tests for no microphone permission, unavailable model, no network, cancellation, timeout, empty transcript, low confidence and playback interruption.
+- Optional dependencies remain isolated; existing core tests must still run without downloading ML models.
+- No candidate becomes the default until the results and trade-offs are reviewed and approved. Record actual evidence and known limitations.
+
+
+## 12. Development quality gates for every phase
+
+All phases use the project's [development workflow](docs/development-workflow.md). These gates apply in addition to phase-specific exit criteria:
+
+1. **Scope gate:** define behavior, non-goals, affected files/interfaces, acceptance criteria, and relevant security/privacy boundaries.
+2. **Baseline gate:** inspect the current Git state and run the relevant baseline checks; record pre-existing failures rather than attributing them to the patch.
+3. **Test gate:** for a bug or behavior change, demonstrate a focused test failing before implementing the fix where practical; then verify it passes and run the full relevant suite.
+4. **Review gate:** inspect the diff and request an independent review for major features or security-sensitive changes when a reviewer tool is available.
+5. **Evidence gate:** run fresh checks on the final changed tree and report exact results, skips, live-vs-mocked coverage, and unresolved risks.
+6. **Integration gate:** present integration choices and wait for explicit approval before remote pushes, merges, deployments, destructive operations, or publication.
+
+Passing deterministic tests does not prove live provider, microphone, speech, camera, or macOS automation behavior. Keep hardware/live acceptance checks explicit.
+
+
+## 20. Repository-audit follow-up — 2026-10-13
+
+- [ ] Review existing external-tool implementations and tests for bounded timeouts, response-size limits, rate-limit handling, retry classification, and honest empty/blocked/error states; fix only demonstrated gaps.
+- [ ] Verify research/RAG outputs preserve source URLs, retrieval time, evidence references, and explicit uncertainty.
+- [ ] Add a small bilingual (English/Hindi/Romanized Hindi/code-switched) regression set for tool selection, argument extraction, and retrieval answers without using private personal data.
+- [ ] If a research API is requested, prototype exactly one adapter (prefer a user-need-matched official source such as arXiv/OpenAlex) with fixtures and source attribution before considering another.
+- [ ] Keep normal CI deterministic and separate opt-in live API, provider, microphone, and target-Mac checks.
+- [ ] Before reusing code from another repository, inspect its exact source, tests, dependency/license terms, and compatibility; document what is reused and why.
+
+Do not create new infrastructure merely to complete this checklist. Existing functionality that already meets a criterion should be verified and marked accordingly rather than duplicated. Full findings: [GitHub account audit](docs/research/github-account-audit-2026-10-13.md).

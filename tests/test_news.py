@@ -56,3 +56,30 @@ def test_handles_network_failures_without_crashing():
     with patch.dict("os.environ", {"NEWS_API_KEY": FAKE_KEY}):
         with patch("news.requests.get", side_effect=requests.RequestException("offline")):
             assert get_headlines() == []
+
+
+def test_handles_unexpected_json_shapes_without_crashing():
+    malformed_payloads = [
+        ["not", "an", "object"],
+        "not an object",
+        {"status": "ok", "articles": "not a list"},
+        {"status": "ok", "articles": [None, "not an article", 42]},
+    ]
+    with patch.dict("os.environ", {"NEWS_API_KEY": FAKE_KEY}):
+        for payload in malformed_payloads:
+            response = Mock()
+            response.json.return_value = payload
+            with patch("news.requests.get", return_value=response):
+                assert get_headlines() == []
+
+
+def test_agent_news_tool_fetches_headlines_only_once(legacy):
+    headlines = ["First headline", "Second headline"]
+    with patch("main.get_credential", return_value="test-news-key"):
+        with patch("main.news.get_headlines", return_value=headlines) as fetch:
+            result = legacy._tool_news({})
+
+    assert result.ok is True
+    assert result.data == {"headlines": headlines}
+    assert result.message == "Here are top headlines. Headline 1: First headline. Headline 2: Second headline."
+    fetch.assert_called_once_with()

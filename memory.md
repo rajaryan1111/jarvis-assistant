@@ -156,3 +156,41 @@ The six-document set now includes this target specification in prd.md, architect
 9. Run security, privacy, reliability and target-Mac release validation before claiming product readiness.
 
 Do not build a single unrestricted “AI can control everything” shell. Build a modular tool ecosystem with one policy gate, scoped permissions, reviewable plans and auditable outcomes.
+
+## 16. External repository review — voice and project media — 2026-10-13
+
+Reviewed as design/technology references for ULTRON; no external code, model weights, dependencies, or runtime integrations were copied or installed in this review.
+
+1. **k2-fsa/OmniVoice** — https://github.com/k2-fsa/OmniVoice — Apache-2.0 repository; multilingual zero-shot TTS with voice design/cloning. Decision: evaluate as an optional TTS adapter for Hindi/English/Hinglish on the actual Apple Silicon Mac. Measure model/install size, cold start, latency, memory, pronunciation, and offline behavior. Not selected as default and not integrated.
+2. **cjpais/handy** — https://github.com/cjpais/handy — MIT, offline-first cross-platform transcription app. Decision: adopt its design ideas for local STT, VAD, push-to-talk, visible recording state, cancellation, and graceful offline failure as evaluation requirements. Do not embed/fork it or assume its CLI is a stable integration API without further inspection.
+3. **HeyGen** — user supplied https://github.com/heygen-comP, which did not identify a specific repository. A public HeyGen organization project, https://github.com/heygen-com/hyperframes, appears relevant to HTML-based deterministic demo-video rendering. Decision: optional future project-demo/pitch workflow only; not core ULTRON scope unless the user confirms this was the intended repo.
+
+**Cross-cutting decision:** keep STT, VAD, language handling, wake-word detection, and TTS as separate replaceable adapters. Preserve local-first processing, explicit disclosure for remote audio, optional heavy dependencies, permission-aware voice controls, and measured language-specific quality. Voice cloning remains opt-in and consent-bound. These are research decisions and proposed acceptance criteria, not implemented features.
+
+Research sources: OmniVoice README/license and Apple Silicon notes; Handy README/license and offline transcription workflow; HeyGen HyperFrames README and project-local agent skill documentation. See docs/research/voice-stack-repository-review.md for the comparative rationale and evaluation checklist.
+
+
+## 17. Adopted development methodology — 2026-10-13
+
+Adapted relevant practices from [obra/superpowers](https://github.com/obra/superpowers) for future Jarvis/ULTRON work. This is a project-specific workflow adaptation, not a claim that the Superpowers plugin is installed or a runtime dependency.
+
+- Always-on project guidance: [AGENTS.md](AGENTS.md).
+- Full workflow, task template, verification and Git safety: [docs/development-workflow.md](docs/development-workflow.md).
+- Key practices: clarify non-trivial requirements; plan exact files/tests; test-first bug fixes; root-cause debugging; small reversible changes; independent review for major changes; fresh verification before completion claims.
+- Preserve existing branches and draft PRs; no unapproved push, merge, deployment, or publication.
+- Keep process proportional: trivial tasks do not need a formal design document or multi-agent workflow.
+- Do not copy Superpowers skill text wholesale. Reuse the ideas in our own project context and preserve its MIT notice if any substantial portions are ever copied.
+
+
+## 21. GitHub account repository audit — 2026-10-13
+
+Reviewed repository inventories and relevant docs/source directories across 18 owned repositories and 2 additional collaborator repositories accessible to the linked GitHub account. The full report is [docs/research/github-account-audit-2026-10-13.md](docs/research/github-account-audit-2026-10-13.md).
+
+Highest-value reusable patterns:
+- From GraphOne: shared bounded HTTP, classified retries, source adapters, schema/freshness validation, idempotency, provenance, explicit failure counts, provider fallback, and deterministic fixtures.
+- From AI Orbit Tools Ingestion: source registry, separate discovery from official-source verification, do not guess blocked/missing facts, explainable deduplication, resumable checkpoints, and source-specific fixtures.
+- From IS Copilot: staged retrieval/reranking/evidence assembly, confidence and unknown states, lexical fallback, and explicit Hindi/Hinglish/PDF use cases.
+- From ULTRON itself: extend the current provider-neutral runtime, bounded agent loop, central tool registry/policy, authenticated HUD, optional RAG, and existing test seams rather than introducing a second orchestration framework.
+- Candidate future research sources: arXiv Atom, OpenAlex, selected RSS feeds, Hacker News Algolia, Hugging Face metadata, and OpenRouter model metadata. These are not integrated or approved as production dependencies. Remote OK is only relevant if a career-search workflow is explicitly in scope.
+
+No code, dependency, dataset, personal media, or private repository content was copied. No tests were run across all repositories; this was a targeted reuse audit, not a line-by-line security audit. No PR was opened, no merge/deployment occurred, and main/existing PRs were left unchanged.

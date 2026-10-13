@@ -1,5 +1,6 @@
 import os
 import json
+import html
 import datetime
 import subprocess
 import urllib.parse
@@ -304,6 +305,7 @@ def play_youtube(query: str, ctx: CommandContext = None) -> str:
     search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
     try:
         res = requests.get(search_url, timeout=5)
+        res.raise_for_status()
         video_ids = re.findall(r"watch\?v=([\w-]{11})", res.text)
         url = "https://www.youtube.com/watch?v=" + video_ids[0] if video_ids else search_url
         reply = f"Playing {query} on YouTube."
@@ -320,15 +322,30 @@ def _weather_report(city: str) -> ToolResult:
     if not WEATHER_API_KEY:
         return ToolResult(False, "Weather API key is not configured.")
     try:
-        data = requests.get(
+        response = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
             params={"q": city, "appid": WEATHER_API_KEY, "units": "metric"},
             timeout=5,
-        ).json()
-        if data.get("cod") != 200:
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or data.get("cod") != 200:
             return ToolResult(False, f"Weather error for {city}.")
-        temp = int(data["main"]["temp"])
-        desc = data["weather"][0]["description"]
+        main_data = data.get("main")
+        conditions = data.get("weather")
+        if not isinstance(main_data, dict) or not isinstance(conditions, list) or not conditions:
+            return ToolResult(False, f"Weather data for {city} was incomplete.")
+        raw_temp = main_data.get("temp")
+        desc = conditions[0].get("description") if isinstance(conditions[0], dict) else None
+        if (
+            isinstance(raw_temp, bool)
+            or not isinstance(raw_temp, (int, float))
+            or not isinstance(desc, str)
+            or not desc.strip()
+        ):
+            return ToolResult(False, f"Weather data for {city} was incomplete.")
+        temp = int(raw_temp)
+        desc = desc.strip()
         return ToolResult(True, f"The weather in {city} is {desc}, {temp}°C.",
                           {"city": city, "temperature_c": temp, "description": desc})
     except Exception as e:
@@ -377,11 +394,13 @@ def _ddg_result_titles(query: str) -> list:
     url_html = "https://duckduckgo.com/html/?q=" + urllib.parse.quote(query)
     try:
         res = requests.get(url_html, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
+        res.raise_for_status()
         matches = re.findall(r'class="result__a".*?>(.*?)</a>', res.text)  # result__a anchors
     except Exception as e:
         print("Web search error:", type(e).__name__)
         return []
-    return [re.sub("<.*?>", "", m).strip() for m in matches if re.sub("<.*?>", "", m).strip()]
+    titles = [html.unescape(re.sub("<.*?>", "", match)).strip() for match in matches]
+    return [title for title in titles if title]
 
 
 def web_search_ddg(query: str, ctx: CommandContext = None) -> str:
@@ -419,10 +438,18 @@ def get_live_cricket_score(cmd: str) -> str:
             params={"apikey": CRICKET_API_KEY, "offset": 0},
             timeout=8,
         )
+        resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            return "The cricket API returned an invalid response, sir."
+        if data.get("status") == "failure" or data.get("error"):
+            return "The cricket service could not provide live scores right now, sir."
 
-        # Different APIs might use different keys; try to be defensive.
-        matches = data.get("data") or data.get("matches") or []
+        # Different API versions may use different keys; validate before processing.
+        raw_matches = data.get("data") or data.get("matches") or []
+        if not isinstance(raw_matches, list):
+            return "The cricket API returned invalid match data, sir."
+        matches = [match for match in raw_matches if isinstance(match, dict)]
         if not matches:
             return "I did not find any ongoing match right now, sir."
 
@@ -457,6 +484,8 @@ def get_live_cricket_score(cmd: str) -> str:
 
         parts = []
         for inn in innings_list:
+            if not isinstance(inn, dict):
+                continue
             r = inn.get("r") or inn.get("runs") or "?"
             w = inn.get("w") or inn.get("wickets") or "?"
             o = inn.get("o") or inn.get("overs") or "?"
@@ -1429,7 +1458,10 @@ def _tool_news(_args) -> ToolResult:
     heads = news.get_headlines()[:5]
     if not heads:
         return ToolResult(False, "Sorry, I could not fetch the news right now.")
-    return ToolResult(True, get_news(), {"headlines": heads})
+    message = "Here are top headlines. " + " ".join(
+        f"Headline {index + 1}: {headline}." for index, headline in enumerate(heads)
+    )
+    return ToolResult(True, message, {"headlines": heads})
 
 
 def _tool_add_reminder(args) -> ToolResult:

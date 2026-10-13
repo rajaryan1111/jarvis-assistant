@@ -250,3 +250,37 @@ Provide dry-run, cancel, stop, safe retry and rollback controls where supported.
 Distinguish “On this Mac” (local files/Git, allowlisted commands, project index, policy/approval), “Sent to provider” (named AI service and context shared), and “External effect” (service read or changed).
 
 Show microphone/wake-word state continuously. Local orchestration/wake-word detection does not guarantee cloud speech recognition, AI reasoning or speech synthesis is offline.
+
+## 16. Voice engine settings and privacy feedback — research proposal (2026-10-13)
+
+The voice settings surface should make engine choices and data flow understandable without exposing model internals to ordinary users.
+
+- Provide separate settings for speech recognition, language handling, wake word, and speech output; show the active engine and whether it is local, remote, or mixed.
+- Include push-to-talk as a reliable fallback to wake-word use. Recording state must be visible, with obvious stop, mute, cancel, and retry controls.
+- Display permission, model-download, offline, and device errors in plain language. Preserve typed HUD interaction when audio is unavailable.
+- Let the user choose response language (automatic, Hindi, English, Hinglish) and speech output where supported. Do not imply an engine supports a language until tested.
+- Voice-cloning controls, if ever introduced, must be off by default and separate from ordinary voice selection. Explain reference-audio handling, require confirmation of permission, and provide deletion controls.
+- Do not show a “private/local” badge unless the current operation's audio/transcript processing path is actually local. Clearly label when audio or text leaves the device.
+- A future demo-video workflow using HyperFrames belongs in project artifacts, not voice settings; it is optional and requires a separate user-requested task.
+
+These are proposed UX requirements. They are not evidence that the current HUD already exposes these controls.
+
+
+## 17. Developer-facing progress and verification experience
+
+For repository and implementation tasks, present progress in a compact, evidence-oriented format:
+- **Goal and scope:** intended behavior and files/components in scope.
+- **Plan:** small ordered steps and acceptance checks for non-trivial work.
+- **Changes:** what actually changed, separated from proposals or untouched files.
+- **Verification:** commands run and exact pass/fail/skip outcomes; identify mocked tests versus live Mac/provider checks.
+- **Review findings and remaining risks:** unresolved issues, untested paths, and required user decisions.
+- **Git state:** branch and commit/PR status, clearly distinguishing local/isolated work from shared remote changes.
+
+Do not report 'fixed', 'passing', or 'complete' based only on code inspection or another agent's message. Keep small requests lightweight and never overwhelm the user with process narration.
+
+
+## 19. Evidence and external-tool status in the HUD — 2026-10-13
+
+When a research or external-information task returns results, the HUD should be able to show the source link, retrieval time, and a short evidence excerpt/reference, with a clear label for stale, blocked, empty, failed, or insufficient-evidence results. Do not imply a result is authoritative simply because an API responded successfully. Avoid dumping full private source content into the UI's persistent event log; show the minimum needed and let the user open the source.
+
+Only add a source-specific UI control when the underlying adapter and status semantics are implemented and tested. The audit's proposed API list is a research shortlist, not a promise that those integrations exist.

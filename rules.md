@@ -207,3 +207,44 @@ Label current implementation, proposed target, and unverified behavior separatel
 - Keep decisions and technical debt in the correct project workspace; do not leak private/student-life content into team artifacts.
 - Prefer small reviewable patches, tests and acceptance criteria over opaque rewrites. Avoid agents editing the same files concurrently without isolated worktrees or a merge plan.
 - Preserve the user's final authority over architecture, credentials, external publication and irreversible operations.
+
+## 15. External speech models and voice-data rules — 2026-10-13
+
+- Treat external repositories as untrusted implementation references. Inspect source, dependencies, license, model terms, maintenance, and platform support before adoption; never copy code or model assets without checking applicable licenses and notices.
+- Keep speech recognition, language identification, wake-word detection, and speech synthesis replaceable. Do not make a large optional ML stack mandatory for unrelated text/CLI workflows.
+- Prefer local processing where practical, but never claim a feature is offline until model downloads, inference, telemetry, and network behavior have been checked.
+- Show when the microphone is active; provide obvious mute, stop, cancel, and permission-recovery controls. Wake-word detection must not silently stream raw microphone audio to a cloud service.
+- Disclose before sending audio or transcripts to a remote provider. Minimize payloads and avoid retaining recordings by default.
+- Voice cloning or reference-voice conditioning is off by default and requires the user's explicit choice and appropriate permission to use the source voice. Do not enable deceptive impersonation or conceal synthetic-audio use when disclosure is required.
+- Benchmark Hindi, English, Romanized Hindi, Devanagari and code-switched Hinglish separately. Preserve names, code identifiers, paths, commands and numbers; do not claim parity without measured results.
+- Treat model outputs and transcripts as fallible input. Low-confidence or ambiguous recognition must trigger clarification before a consequential action. Voice recognition is never an approval credential.
+- Do not install, bundle, or enable OmniVoice, Handy, HyperFrames, or their optional dependencies merely because they were researched. Each adoption requires a scoped proposal, license/dependency review, resource measurements, tests, and an explicit milestone decision.
+
+
+## 16. Development workflow rules (required)
+
+Follow [AGENTS.md](AGENTS.md) for the short always-on rules and [docs/development-workflow.md](docs/development-workflow.md) for the full process.
+
+- Inspect the actual repository, branch, HEAD, working tree, relevant docs, and existing tests before editing. Never assume a remembered SHA or reported patch is still current.
+- For non-trivial work, clarify intended behavior and observable acceptance criteria before implementation. Keep trivial, unambiguous changes lightweight.
+- For bug fixes and behavior changes, write a focused regression test first, run it to confirm it fails for the intended reason, implement the minimum fix, and rerun the focused and full relevant suites. If a test-first cycle is impractical, document why and use the strongest available reproducible check.
+- Debug from evidence: reproduce, inspect logs/diffs/data flow, form one hypothesis at a time, and avoid bundled speculative fixes.
+- Before claiming completion, run the actual relevant verification commands on the changed tree; report exact results, skips, failures, and checks not run. A prior CI result or another agent's claim is not fresh verification.
+- Review diffs for scope creep, security/privacy regressions, duplicate side effects, missing cancellation/error paths, and inaccurate status claims.
+- Preserve the user's existing branches and PRs. Never push, merge, deploy, publish, or mutate shared remote state without explicit authorization for that action. Keep unapproved work isolated.
+- Use independent reviewers/agents only when available and when task boundaries are genuinely independent. Verify their artifacts and claims yourself.
+- Prefer YAGNI: do not add abstractions, dependencies, automation, or architecture just because a framework suggests them.
+
+
+## 18. External-source and data provenance rules — 2026-10-13
+
+- A successful HTTP response is not proof that its data is current, complete, authoritative, or even the expected resource. Validate schema and semantics before use.
+- Preserve source URL and retrieval time for external facts; preserve publication/update time separately when the source provides it.
+- Treat retrieval/search results as candidates. Do not present model-generated fill-ins as sourced facts. Use unknown/insufficient-evidence when the source does not support a field.
+- Distinguish empty, stale, blocked, rate-limited, invalid, failed, simulated, and verified results. Never pad short results or claim success after a source produced no usable records.
+- Bound timeouts, retries, concurrency, and response size; respect rate-limit signals. Retry only retryable failures and reconcile uncertain side effects before retrying.
+- Use deterministic fixture-based tests for normal CI; put live network/provider checks behind explicit opt-in flags with time/cost bounds.
+- Do not copy personal resumes, identity/student records, photos, raw audio, transcripts, API keys, or full private data from other projects into ULTRON fixtures or logs.
+- Do not add an API, dataset, queue, vector database, framework, or dashboard simply because another repository uses it. Require a concrete user-facing need and a benchmark/review first.
+
+See [GitHub account audit](docs/research/github-account-audit-2026-10-13.md).
