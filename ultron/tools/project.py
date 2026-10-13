@@ -32,7 +32,10 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback (tomli in uv.lock)
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from ultron.security.policy import RiskTier
 from ultron.security.redact import redact
