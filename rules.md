@@ -234,3 +234,17 @@ Follow [AGENTS.md](AGENTS.md) for the short always-on rules and [docs/developmen
 - Preserve the user's existing branches and PRs. Never push, merge, deploy, publish, or mutate shared remote state without explicit authorization for that action. Keep unapproved work isolated.
 - Use independent reviewers/agents only when available and when task boundaries are genuinely independent. Verify their artifacts and claims yourself.
 - Prefer YAGNI: do not add abstractions, dependencies, automation, or architecture just because a framework suggests them.
+
+
+## 18. External-source and data provenance rules — 2026-10-13
+
+- A successful HTTP response is not proof that its data is current, complete, authoritative, or even the expected resource. Validate schema and semantics before use.
+- Preserve source URL and retrieval time for external facts; preserve publication/update time separately when the source provides it.
+- Treat retrieval/search results as candidates. Do not present model-generated fill-ins as sourced facts. Use unknown/insufficient-evidence when the source does not support a field.
+- Distinguish empty, stale, blocked, rate-limited, invalid, failed, simulated, and verified results. Never pad short results or claim success after a source produced no usable records.
+- Bound timeouts, retries, concurrency, and response size; respect rate-limit signals. Retry only retryable failures and reconcile uncertain side effects before retrying.
+- Use deterministic fixture-based tests for normal CI; put live network/provider checks behind explicit opt-in flags with time/cost bounds.
+- Do not copy personal resumes, identity/student records, photos, raw audio, transcripts, API keys, or full private data from other projects into ULTRON fixtures or logs.
+- Do not add an API, dataset, queue, vector database, framework, or dashboard simply because another repository uses it. Require a concrete user-facing need and a benchmark/review first.
+
+See [GitHub account audit](docs/research/github-account-audit-2026-10-13.md).
