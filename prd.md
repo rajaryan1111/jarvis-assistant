@@ -346,3 +346,12 @@ Review of external projects identified two relevant evaluation candidates and on
 ULTRON's own development must follow the project-adapted workflow in [docs/development-workflow.md](docs/development-workflow.md), with concise always-on rules in [AGENTS.md](AGENTS.md). For non-trivial changes, clarify the user outcome and acceptance criteria, plan the smallest coherent implementation, write a regression test before production changes, investigate root causes before fixes, review the diff, and run fresh verification before claiming completion. Small, unambiguous tasks should remain lightweight; the process must not become ceremony that delays simple answers.
 
 These are development-process requirements for contributors and coding agents, not runtime features or a claim that a particular coding-agent plugin is installed.
+
+
+## 18. Evaluation-first quality gates — 2026-10-13
+
+Before introducing agent frameworks, new retrieval engines, or multi-agent orchestration, ULTRON should demonstrate a measurable gap in the current implementation. Use a small deterministic regression corpus for observable safety and correctness behaviors: malformed/unknown tool-call rejection; central policy/registry enforcement; retry idempotency for side effects; cancellation and budget limits; evidence-backed completion status; source-faithful study answers and verifiable citations. Keep model-graded quality evaluations separate from deterministic CI so routine local tests remain fast, reproducible, and cost-controlled. Include English, Hindi, Romanized Hindi, Devanagari, and code-switched Hinglish fixtures for language-sensitive behavior. The initial evaluation set is a requirement, not a claim that such a corpus already exists.
+
+For document retrieval, benchmark the current baseline against keyword, semantic, and hybrid retrieval on representative course notes, question banks, and project documents before adding reranking or a new store. Track retrieval coverage/relevance, unsupported-answer rate, citation support, language/script behavior where applicable, latency, and operational cost. Add complexity only when measured results justify it.
+
+Research basis: [selective review of awesome-llm-apps](docs/research/awesome-llm-apps-review.md). These decisions adapt evaluation and retrieval patterns; they do not adopt the upstream framework stack.
