@@ -4,7 +4,7 @@ import requests
 
 
 def test_cricket_returns_valid_match_summary(legacy, monkeypatch):
-    monkeypatch.setattr(legacy, "CRICKET_API_KEY", "test-cricket-key")
+    monkeypatch.setattr(legacy, "CRICKET_API_KEY", "fake-cricket-key")
     response = Mock()
     response.json.return_value = {
         "status": "success",
@@ -23,11 +23,11 @@ def test_cricket_returns_valid_match_summary(legacy, monkeypatch):
     assert result == "India vs Australia. India: 120/3 in 15 overs. Status: India batting."
     response.raise_for_status.assert_called_once_with()
     assert get.call_args.kwargs["timeout"] == 8
-    assert get.call_args.kwargs["params"] == {"apikey": "test-cricket-key", "offset": 0}
+    assert get.call_args.kwargs["params"] == {"apikey": "fake-cricket-key", "offset": 0}
 
 
 def test_cricket_http_failure_returns_unavailable_message(legacy, monkeypatch):
-    monkeypatch.setattr(legacy, "CRICKET_API_KEY", "test-cricket-key")
+    monkeypatch.setattr(legacy, "CRICKET_API_KEY", "fake-cricket-key")
     response = Mock()
     response.raise_for_status.side_effect = requests.HTTPError("service unavailable")
     with patch("main.requests.get", return_value=response):
@@ -38,7 +38,7 @@ def test_cricket_http_failure_returns_unavailable_message(legacy, monkeypatch):
 
 
 def test_cricket_malformed_payloads_do_not_crash(legacy, monkeypatch):
-    monkeypatch.setattr(legacy, "CRICKET_API_KEY", "test-cricket-key")
+    monkeypatch.setattr(legacy, "CRICKET_API_KEY", "fake-cricket-key")
     malformed_payloads = [
         ["not", "an", "object"],
         {"status": "failure", "error": "rate limit"},

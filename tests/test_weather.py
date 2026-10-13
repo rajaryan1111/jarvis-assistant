@@ -4,7 +4,7 @@ import requests
 
 
 def test_weather_uses_http_status_and_validates_payload(legacy, monkeypatch):
-    monkeypatch.setattr(legacy, "WEATHER_API_KEY", "test-weather-key")
+    monkeypatch.setattr(legacy, "WEATHER_API_KEY", "fake-weather-key")
     response = Mock()
     response.json.return_value = {
         "cod": 200,
@@ -19,13 +19,13 @@ def test_weather_uses_http_status_and_validates_payload(legacy, monkeypatch):
     response.raise_for_status.assert_called_once_with()
     get.assert_called_once_with(
         "https://api.openweathermap.org/data/2.5/weather",
-        params={"q": "Pune", "appid": "test-weather-key", "units": "metric"},
+        params={"q": "Pune", "appid": "fake-weather-key", "units": "metric"},
         timeout=5,
     )
 
 
 def test_weather_http_error_is_reported_as_unavailable(legacy, monkeypatch):
-    monkeypatch.setattr(legacy, "WEATHER_API_KEY", "test-weather-key")
+    monkeypatch.setattr(legacy, "WEATHER_API_KEY", "fake-weather-key")
     response = Mock()
     response.raise_for_status.side_effect = requests.HTTPError("request failed")
     with patch("main.requests.get", return_value=response):
@@ -37,7 +37,7 @@ def test_weather_http_error_is_reported_as_unavailable(legacy, monkeypatch):
 
 
 def test_weather_malformed_payloads_are_not_reported_as_success(legacy, monkeypatch):
-    monkeypatch.setattr(legacy, "WEATHER_API_KEY", "test-weather-key")
+    monkeypatch.setattr(legacy, "WEATHER_API_KEY", "fake-weather-key")
     malformed_payloads = [
         ["not", "an", "object"],
         {"cod": 200, "main": {}, "weather": [{"description": "clear"}]},
