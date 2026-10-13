@@ -207,3 +207,67 @@ Exit criteria: private data stays out of shared workspaces; no diagnosis, emotio
 Work: alternate explanation formats; accessible text/voice interaction; presentation/public-speaking practice; creative project support; life-after-college option comparisons.
 
 Exit criteria: user-controlled preferences; accessible fallback when voice fails; career/life advice is transparent about assumptions and does not guarantee outcomes.
+
+## Phase 17 — Local project command center and impact planning
+
+**Goal:** Let the user select and understand authorized local projects by voice, with accurate scoped context.
+
+Work: project/repository registry; active workspace/branch indicator; Git status/history/diff; project summaries; task/dependency/decision/technical-debt records; voice routing; read-only architecture and risk reports.
+
+Exit criteria: ambiguous targets trigger clarification; reports separate inspected facts from assumptions; unrelated files/user changes remain untouched; project contexts do not leak; all access respects workspace roots.
+
+## Phase 18 — Senior-engineer mentor and consequence analysis
+
+**Goal:** Help the user reason like a stronger engineer, not just generate code.
+
+Work: architecture reviews; alternatives; complexity/cost/security/privacy/performance/maintainability trade-offs; failure modes; dependency/migration impact; technical-debt register; deadline-aware advice; rollback and verification plans; evidence labels.
+
+Exit criteria: material recommendations state evidence, assumptions, alternatives, consequences and next steps; unsafe premises are challenged respectfully; hypotheses are never labelled verified facts.
+
+## Phase 19 — Safe local implementation loop
+
+**Goal:** Complete bounded coding tasks from voice request to reviewed local diff and test evidence.
+
+Work: plan/preview; branch-aware edits; allowlisted command execution; constrained test runner; lint/type-check/test workflows; diff review; cancellation; handoff; baseline/final Git status comparison.
+
+Exit criteria: no unapproved external writes; existing user changes preserved; each edit has a reviewable diff; tests reported accurately; failure/cancellation leaves clear state and recovery instructions.
+
+## Phase 20 — GitHub integration with approval-gated writes
+
+**Goal:** Connect project work to GitHub without compromising repository ownership or branch safety.
+
+Work: read repositories/issues/PRs/checks; map local branch to remote; prepare commits and PR descriptions; review CI evidence; create/update remote resources only after exact-action approval.
+
+Exit criteria: least-privilege scopes; branch/base verified before writes; no force-push or auto-merge; write approvals auditable; real GitHub tests distinguished from mocks.
+
+## Phase 21 — Coding-provider adapters and cross-review
+
+**Goal:** Use coding agents as optional specialists under ULTRON's task plan.
+
+Work: adapters for ChatGPT/Codex, Claude, Antigravity and other tools through supported APIs, CLIs, MCP servers or documented mechanisms; bounded provider roles; minimal context; isolated worktrees; disagreement report; cost/latency/data-transfer display.
+
+Exit criteria: only verified capabilities advertised; providers cannot grant permissions; secrets excluded; concurrent edits isolated; provider output validated before it is evidence.
+
+## Phase 22 — Supabase and cloud-service workflows
+
+**Goal:** Help build and maintain connected applications without accidental cloud or production damage.
+
+Work: project/schema inspection; migration drafting; local/staging validation; type generation where supported; environment separation; backup/rollback planning; explicit deployment/database approval.
+
+Exit criteria: exact project/environment shown before mutations; production writes default-deny without explicit confirmation; migrations include validation/recovery; credentials least-privilege and secure.
+
+## Phase 23 — Visible browser automation and connector coverage
+
+**Goal:** Support coding-related sites without suitable APIs, without promising universal automation.
+
+Work: visible browser sessions; per-site capability registry; user-confirmed navigation/submissions; session isolation; website-change detection; manual handoff for CAPTCHA/MFA or unsupported flows.
+
+Exit criteria: no security-control or service-policy bypass; user can stop automation; unsupported workflows identified honestly; external submissions require preview and specific approval.
+
+## Phase 24 — Reliability, recovery and release hardening
+
+**Goal:** Make multi-tool workflows predictable and auditable before broad daily use.
+
+Work: adapter contract tests; fault injection; timeout/rate-limit handling; idempotency; audit log; permission revocation; backup/recovery drills; offline behavior; privacy/security review; real macOS packaging and microphone tests.
+
+Exit criteria: each integration marked planned/prototype/verified/unavailable; failures never masquerade as success; cancellation/recovery tested; high-impact approvals reviewed; macOS validated on target hardware.
