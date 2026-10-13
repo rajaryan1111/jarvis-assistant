@@ -266,7 +266,7 @@ The voice settings surface should make engine choices and data flow understandab
 These are proposed UX requirements. They are not evidence that the current HUD already exposes these controls.
 
 
-## 15. Developer-facing progress and verification experience
+## 17. Developer-facing progress and verification experience
 
 For repository and implementation tasks, present progress in a compact, evidence-oriented format:
 - **Goal and scope:** intended behavior and files/components in scope.
