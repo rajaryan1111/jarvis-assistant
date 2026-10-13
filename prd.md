@@ -341,7 +341,7 @@ Review of external projects identified two relevant evaluation candidates and on
 - These are evaluation requirements, not claims that either project has been integrated or validated in ULTRON.
 
 
-## 12. Engineering workflow requirements
+## 18. Engineering workflow requirements
 
 ULTRON's own development must follow the project-adapted workflow in [docs/development-workflow.md](docs/development-workflow.md), with concise always-on rules in [AGENTS.md](AGENTS.md). For non-trivial changes, clarify the user outcome and acceptance criteria, plan the smallest coherent implementation, write a regression test before production changes, investigate root causes before fixes, review the diff, and run fresh verification before claiming completion. Small, unambiguous tasks should remain lightweight; the process must not become ceremony that delays simple answers.
 
