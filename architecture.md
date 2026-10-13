@@ -288,3 +288,60 @@ Budget tools must show assumptions and arithmetic and never purchase or transfer
 ### 12.5 Architecture rollout
 
 Begin with local, inspectable task/workspace records and user-approved memory; then add study and project workflows; next reminders and opportunity tracking; then optional private support modes. Do not introduce calendars, email, finance, health, or social integrations until their permissions, retention, cancellation and failure behavior are defined and tested.
+
+## 14. Local-first multi-tool project orchestration (target architecture)
+
+### 14.1 Core design
+Add a Project Orchestrator above the shared runtime and central ToolRegistry. It coordinates local repositories and external coding services but does not give an LLM unrestricted shell, filesystem, browser or account access. Every tool uses typed schemas, scoped permissions, risk classification, timeouts, output limits and audit records.
+
+Target flow:
+1. Local wake-word/speech layer receives a command and resolves language/intent.
+2. Context resolver identifies active project, repository, branch, task and autonomy level; it asks if the target is ambiguous.
+3. Planner returns a structured plan: objective, steps, tools, expected changes, risks, verification and rollback.
+4. Policy engine classifies each action and checks workspace scope, credentials, approval and data-sharing rules.
+5. ToolRegistry dispatches to local adapters or approved external connectors.
+6. Evidence collector stores bounded records of commands, exit codes, changed paths, diffs, tests, provider calls and approvals.
+7. Mentor/reviewer interprets evidence, challenges assumptions and explains consequences.
+8. HUD presents progress, provider boundaries, diffs, approvals and handoff.
+
+The model proposes; deterministic policy authorizes; adapters execute; evidence supports claims. No model response can grant itself permission.
+
+### 14.2 Adapter registry
+Use a versioned interface for adapters such as:
+- Local workspace/filesystem and Git: status, diff, branch, commit preparation and history; external writes gated.
+- Shell and test runner: allowlisted commands, working-directory confinement, timeouts, bounded output and environment sanitization.
+- GitHub: repositories, issues, PRs, checks, review comments, branch/file operations, commits and pushes subject to scopes/approvals.
+- Supabase: project metadata, schema inspection, SQL/editor workflows, logs and deployment only when explicitly supported and authorized.
+- ChatGPT/Codex, Claude and Antigravity through supported APIs, CLIs, MCP endpoints or documented app integration surfaces.
+- Documentation/search and browser workflows for services without suitable APIs, with visible browser state and human approval for consequential submissions.
+
+Each adapter declares capability IDs, read/write status, authentication, minimum scopes, local/cloud processing, outbound data classes, rate limits, idempotency, timeout/retry policy, audit schema and test status. Do not imply a brand-name integration exists merely because its website opens. If a service lacks an official programmable interface, label the connector experimental and use a visible, authorized workflow; never bypass CAPTCHA, MFA, access controls or service restrictions.
+
+### 14.3 Local execution and macOS security
+- Keep coordinator, project index, policy engine and approval UI local by default; bind local service to loopback and authenticate local clients.
+- Use macOS Keychain or equivalent secure credential storage. Redact credentials from outputs and logs. Never put secrets in prompts, generated docs, commits or persistent memory.
+- Constrain workspace roots and deny traversal outside them unless separately permitted. Show active root, repository and branch in the HUD.
+- Run risky commands in constrained processes with timeouts and bounded output. Do not let untrusted text bypass command allowlists.
+- Treat prompt injection from README files, issues, webpages, dependency output and generated code as untrusted content; it cannot change authorization.
+- Provide global stop/cancel, per-adapter disable, emergency mute, and clear indicators for microphone, camera, screen capture, browser and cloud model activity.
+
+### 14.4 Project graph and evidence ledger
+Model scoped records: Project, Repository, Workspace, Branch, Task, Plan, Decision, Artifact, CommandRun, TestRun, ProviderReview, Approval, IntegrationGrant and RiskNote. Link recommendations/changes to evidence and timestamps. Keep project memories separate; cross-project retrieval is explicit and visible.
+
+For each task track requested outcome, baseline commit/status, plan version, files touched, commands actually run, tests passed/failed/skipped/not run, external data shared, approval events, resulting commit/PR/deployment IDs when available, limitations and next step. A green UI badge never substitutes for test evidence.
+
+### 14.5 Senior-engineer mentor/reviewer
+Combine repository context, task requirements, project constraints and verified evidence into an impact review. Identify alternatives, assumptions, complexity/cost/security/privacy/performance/maintenance trade-offs, failure modes, migration/rollback paths and confidence/evidence labels. Multiple providers may review a bounded task, but ULTRON must compare findings, expose disagreement and not treat model consensus as proof.
+
+Review structure: recommendation; evidence; alternatives; expected benefits; risks/downstream consequences; verification plan; rollback; unanswered questions; next action. Prefer the smallest maintainable change that meets requirements unless the user chooses another trade-off. Distinguish advice from verified facts.
+
+### 14.6 Consequence and approval engine
+Use a deterministic risk matrix for read-only, local reversible, shared/external write and destructive/high-impact actions. Approval tokens bind to exact action, target, scope and plan version; plan changes invalidate approval. Voice can request or summarize approval but cannot silently approve high-impact actions. External writes show preview, destination, identity/account, effects and recovery options in the HUD.
+
+Support dry-run/preview, idempotency keys where available, cancellation, compensating actions and rollback notes. Do not retry non-idempotent operations after uncertain outcomes without checking whether the first attempt succeeded. Production database changes require exact environment confirmation, backup/restore strategy, migration review and target identifier.
+
+### 14.7 Multi-provider workflow
+Allow bounded roles such as planner, implementation agent, code reviewer, test analyst or documentation reviewer. The coordinator owns the plan and source-of-truth state; providers receive only minimum relevant context. Avoid sending whole repositories by default. Show provider name, files/context sent, known/estimated cost where available, and local/remote processing. Do not let agents edit the same working tree concurrently without isolation and conflict resolution.
+
+### 14.8 Rollout and verification
+Start with local repository read-only analysis, project switching, impact plans and human-reviewed diffs. Next add safe local edits/tests; then GitHub reads and approval-gated writes; then individual provider adapters; then Supabase staging workflows; finally scoped browser automation. Every adapter needs mocked contract tests and real integration smoke tests when credentials are available. Mark capabilities planned, prototype, verified or unavailable, with date and tested version.
