@@ -1,6 +1,6 @@
 # Jarvis / ULTRON — Project Memory and Handoff
 
-**Last updated:** 2026-10-13  
+**Last updated:** 2026-10-13 (v3 requirements update)  
 **Purpose:** Concise handoff log; source code and Git history remain authoritative.
 
 ## 1. Approved product direction
@@ -9,6 +9,8 @@
 - Inspiration: the collaborative working relationship of Tony Stark and JARVIS; not fictional unrestricted autonomy.
 - Execution preference: **local capabilities where practical; cloud AI when useful.**
 - First interface priority: **voice and microphone**, with HUD/CLI and visible artifacts as companions.
+- Required languages: **Hindi, English, and Hinglish**, including Romanized Hindi and Devanagari.
+- Required product surfaces: **installable macOS desktop app with local “Ultron” wake word** plus a companion website/HUD; both share core runtime and authorization.
 - Primary platform: macOS; initial product is a single-user assistant.
 - Core interaction loop: understand → plan → bounded step → inspect evidence → continue or ask → summarize.
 
@@ -20,7 +22,7 @@
 - Last-known head for `m2.2.1-groq-fixes`: `e7789d8a5f78ed12e49a26d233fc260173b20c64`.
 - Preserve all branches and PRs. Remote actions require explicit authorization; report actual GitHub results.
 - Documentation branch `docs/project-foundation-v1` was created from `main` and contains the original six documents, commit `d43552128372338865e1a032cd64e6ea6b6697a4`.
-- Revised product documents are being staged separately on `docs/ultron-collaborative-assistant-v2`; verify the remote branch before assuming its state.
+- The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`.
 
 ## 3. Architecture summary
 
@@ -74,3 +76,23 @@ Deterministic tests/stubs do not prove live provider behavior. macOS voice, micr
 4. Build task/project workspace in small increments after runtime reliability.
 5. Add source/citation handling, repository-aware coding, and website workflows with tests.
 6. Keep current features distinct from proposed future behavior.
+
+## 9. New approved requirements — 2026-10-13
+
+The product direction now explicitly requires:
+- First-class **Hindi, English, and Hinglish** understanding and responses.
+- Hinglish means natural code-switching, Romanized Hindi, and Hindi in Devanagari; preserve English technical vocabulary and code identifiers.
+- An **installable macOS laptop app** with hands-free “Ultron” wake-word activation, so the user does not have to open a browser for each session.
+- A **companion website/HUD** remains available for typed use, visible task state, artifacts, sources, settings, and secure approvals.
+- Desktop and website must share the same runtime/task context and central authorization policy.
+- Prefer local wake-word detection and transparent microphone status; optional login startup is opt-in. Cloud-dependent speech/LLM features must be disclosed.
+- These are requirements, not claims that the current repository already implements them.
+
+## 10. Next implementation sequence
+
+1. Inspect and measure the existing macOS voice pipeline and process lifecycle.
+2. Choose a wake-word/STT/TTS stack based on trilingual tests, latency, resource use, privacy, and offline requirements.
+3. Prototype local “Ultron” detection with mute/quit and visible microphone state.
+4. Carry language preference through recognition, runtime, and speech output.
+5. Package the existing runtime/HUD into a macOS app with clean lifecycle; retain the website as a companion.
+6. Validate install, permissions, wake word, Hindi/English/Hinglish quality, and shared policy on the actual Mac.
