@@ -104,3 +104,22 @@ Before editing, report repository/path, branch and HEAD, target base, clean/dirt
 ## 10. Documentation
 
 Label current implementation, proposed target, and unverified behavior separately. Keep PRD product-focused, architecture technical, rules normative, phases milestone-based, design UX-focused, and memory a dated handoff log. Source code and Git history remain authoritative.
+
+## 11. Trilingual language requirements
+
+- Support Hindi, English, and Hinglish as first-class interaction languages, including Romanized Hindi, Devanagari, and mixed technical phrases.
+- Do not require a language-selection screen for every turn. Infer per utterance, preserve user overrides, and ask briefly when the transcription changes the meaning materially.
+- Preserve code, filenames, commands, identifiers, numbers, and quoted source text. Do not translate code or identifiers unless asked.
+- Treat recognized speech as untrusted user input, not authorization. Never allow wake-word detection or voice-only “yes” to approve a protected action.
+- Report measured language/recognition limitations honestly; do not claim multilingual support merely because the model accepts Unicode.
+- Minimize audio retention; never upload continuous idle audio solely for wake-word detection when a local approach is available and suitable.
+
+## 12. Desktop installation and website rules
+
+- The installable macOS app and the companion website are both product requirements. A website that must be manually opened to start every voice session does not satisfy the wake-word requirement.
+- Install only documented, versioned components. Explain microphone/accessibility permissions and provide explicit mute, quit, uninstall, and recovery controls.
+- Launch-at-login must be opt-in. Show a clear microphone/listening indicator; do not silently record or persist audio.
+- Keep local APIs loopback-only by default and preserve authentication, Host/Origin/CSRF controls, and the central ToolRegistry policy.
+- Desktop and website interfaces must share the same runtime and authorization checks. A UI button, recognized phrase, model output, or local HTTP request cannot bypass policy.
+- Do not claim a feature works until it is tested on the target macOS device. Distinguish local wake-word support from offline speech recognition, LLM inference, and speech synthesis.
+- Website visual review and protected approvals remain useful; use the authenticated HUD approval path for consequential actions.
