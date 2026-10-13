@@ -288,3 +288,17 @@ This is a scoped evaluation task supporting Phases 2/2A and desktop packaging; i
 - Failure tests for no microphone permission, unavailable model, no network, cancellation, timeout, empty transcript, low confidence and playback interruption.
 - Optional dependencies remain isolated; existing core tests must still run without downloading ML models.
 - No candidate becomes the default until the results and trade-offs are reviewed and approved. Record actual evidence and known limitations.
+
+
+## 12. Development quality gates for every phase
+
+All phases use the project's [development workflow](docs/development-workflow.md). These gates apply in addition to phase-specific exit criteria:
+
+1. **Scope gate:** define behavior, non-goals, affected files/interfaces, acceptance criteria, and relevant security/privacy boundaries.
+2. **Baseline gate:** inspect the current Git state and run the relevant baseline checks; record pre-existing failures rather than attributing them to the patch.
+3. **Test gate:** for a bug or behavior change, demonstrate a focused test failing before implementing the fix where practical; then verify it passes and run the full relevant suite.
+4. **Review gate:** inspect the diff and request an independent review for major features or security-sensitive changes when a reviewer tool is available.
+5. **Evidence gate:** run fresh checks on the final changed tree and report exact results, skips, live-vs-mocked coverage, and unresolved risks.
+6. **Integration gate:** present integration choices and wait for explicit approval before remote pushes, merges, deployments, destructive operations, or publication.
+
+Passing deterministic tests does not prove live provider, microphone, speech, camera, or macOS automation behavior. Keep hardware/live acceptance checks explicit.
