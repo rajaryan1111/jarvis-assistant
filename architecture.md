@@ -372,3 +372,12 @@ Keep the voice pipeline modular rather than adopting an external desktop applica
 Repository changes use a repeatable development loop: inspect current branch and working tree; identify existing behavior and acceptance criteria; plan exact files/interfaces/tests for non-trivial work; implement through a verified test-first cycle; review the resulting diff; and report fresh evidence. Bugs require root-cause investigation and a reproducible failing test where feasible. Independent tasks may be isolated in separate branches/worktrees; shared files and coupled changes stay together.
 
 This workflow does not create a second runtime policy system. Runtime authorization remains in the existing security policy and tool registry. Development instructions are documented in [AGENTS.md](AGENTS.md) and [docs/development-workflow.md](docs/development-workflow.md). External Superpowers skills may inspire the process but are not runtime dependencies.
+
+
+## 18. Evaluation and retrieval evolution policy — 2026-10-13
+
+Keep evaluation separate from runtime orchestration. Maintain deterministic tests for tool schemas, authorization, retries/idempotency, budgets/cancellation, and truthful status. Optional model-graded checks may evaluate response quality, multilingual behavior, retrieval usefulness, and citation support, but should be separately invoked and labelled with model/version, cost, dataset, and scoring limitations. Do not put nondeterministic live-provider calls in the default fast test suite without an explicit reason.
+
+For local knowledge retrieval, treat keyword search, semantic search, hybrid search, and reranking as competing strategies behind a replaceable interface—not mandatory layers. Establish a representative query/document baseline first, compare retrieval quality and unsupported-answer rate, and add reranking only when it improves measured outcomes enough to justify latency and dependencies. Keep source document and page/section/chunk provenance connected to retrieved evidence and expose it to the answer/report layer.
+
+Knowledge graphs, a new vector database, or multi-agent research are deferred until representative tasks show a specific limitation the existing design cannot address. See [the awesome-llm-apps review](docs/research/awesome-llm-apps-review.md). This is an evolution policy, not a statement that hybrid retrieval/evaluations are already implemented.
