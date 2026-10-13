@@ -1446,7 +1446,10 @@ def _tool_news(_args) -> ToolResult:
     heads = news.get_headlines()[:5]
     if not heads:
         return ToolResult(False, "Sorry, I could not fetch the news right now.")
-    return ToolResult(True, get_news(), {"headlines": heads})
+    message = "Here are top headlines. " + " ".join(
+        f"Headline {index + 1}: {headline}." for index, headline in enumerate(heads)
+    )
+    return ToolResult(True, message, {"headlines": heads})
 
 
 def _tool_add_reminder(args) -> ToolResult:
