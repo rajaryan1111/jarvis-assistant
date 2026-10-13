@@ -346,3 +346,10 @@ Review of external projects identified two relevant evaluation candidates and on
 ULTRON's own development must follow the project-adapted workflow in [docs/development-workflow.md](docs/development-workflow.md), with concise always-on rules in [AGENTS.md](AGENTS.md). For non-trivial changes, clarify the user outcome and acceptance criteria, plan the smallest coherent implementation, write a regression test before production changes, investigate root causes before fixes, review the diff, and run fresh verification before claiming completion. Small, unambiguous tasks should remain lightweight; the process must not become ceremony that delays simple answers.
 
 These are development-process requirements for contributors and coding agents, not runtime features or a claim that a particular coding-agent plugin is installed.
+
+
+## 20. External-source reliability and evidence — 2026-10-13
+
+Future research and information tools should return source-attributed structured results, not unqualified text alone. Preserve canonical URL, retrieval time, source publication/update time when available, evidence excerpt or source identifier, and a clear state for unknown, stale, blocked, empty, failed, or verified results. A retrieval score proposes candidates; it does not establish truth. The assistant should say when evidence is insufficient.
+
+For external requests, keep the current provider-neutral tool boundary and add only a source adapter that satisfies a real user requirement. The initial optional research candidates are arXiv Atom, OpenAlex, and selected RSS feeds; none is an approved runtime dependency. See [GitHub account audit](docs/research/github-account-audit-2026-10-13.md).
