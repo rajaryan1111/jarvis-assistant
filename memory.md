@@ -170,7 +170,7 @@ Reviewed as design/technology references for ULTRON; no external code, model wei
 Research sources: OmniVoice README/license and Apple Silicon notes; Handy README/license and offline transcription workflow; HeyGen HyperFrames README and project-local agent skill documentation. See docs/research/voice-stack-repository-review.md for the comparative rationale and evaluation checklist.
 
 
-## 13. Adopted development methodology — 2026-10-13
+## 17. Adopted development methodology — 2026-10-13
 
 Adapted relevant practices from [obra/superpowers](https://github.com/obra/superpowers) for future Jarvis/ULTRON work. This is a project-specific workflow adaptation, not a claim that the Superpowers plugin is installed or a runtime dependency.
 
