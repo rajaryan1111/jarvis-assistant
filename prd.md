@@ -107,7 +107,7 @@ The initial product is a single-user assistant for its owner on macOS. It should
 
 ## 7. Interaction model
 
-The assistant should feel like a calm, technically capable teammate. It should remember relevant approved project context, explain its plan briefly, work in manageable steps, ask one focused question when blocked, and report outcomes in plain language. English is baseline; Hinglish can improve incrementally. Users should be able to switch naturally between voice and text.
+The assistant should feel like a calm, technically capable teammate. It should remember relevant approved project context, explain its plan briefly, work in manageable steps, ask one focused question when blocked, and report outcomes in plain language. Hindi, English, and Hinglish are first-class requirements, including Romanized Hindi and Devanagari. Language-specific accuracy must be measured. Users should be able to switch naturally between voice and text.
 
 For larger tasks, use a loop: **understand → plan → do one bounded step → inspect evidence → continue or ask → summarize**.
 
@@ -137,10 +137,10 @@ Set numeric latency/accuracy goals only after measuring a baseline.
 ## 10. Priority order
 
 1. Protect repository and security boundaries; keep the current foundation stable.
-2. Establish this product/architecture/engineering documentation.
-3. Verify runtime reliability and truthful status reporting.
-4. Make voice/microphone interaction reliable.
-5. Build a task workspace for assignments, research, coding, and website projects.
+2. Verify runtime reliability and truthful status reporting.
+3. Build reliable Hindi/English/Hinglish voice interaction and local wake-word activation.
+4. Package an installable macOS desktop app while retaining the companion website/HUD.
+5. Build a shared task workspace for assignments, research, coding, and website projects.
 6. Add inspectable project memory and local retrieval.
 7. Improve vision and contextual awareness.
 8. Expand automation only when useful, testable, and authorized.
@@ -158,3 +158,35 @@ Scope and acceptance criteria are clear; code matches architecture; relevant che
 - Which website frameworks/templates should be defaulted to?
 - What evidence verifies each class of computer action?
 - Which proactive reminders or follow-ups are useful without being intrusive?
+
+## 13. Trilingual conversation and installable desktop product (v3 decision)
+
+### Language behavior
+ULTRON must understand and respond naturally in **Hindi, English, and Hinglish**. Hinglish includes Hindi-English code-switching in the same sentence, Romanized Hindi (for example, “Ultron, mera Python code debug karo”) and Hindi written in Devanagari (for example, “अल्ट्रॉन, मेरा कोड समझाओ”). The user should not have to select a language before every request.
+
+- Detect the language and script per utterance; support mixed-language requests and technical English terms inside Hindi sentences.
+- Reply in the language/style the user used most recently, unless they request another language. Allow explicit commands such as “reply in English”, “Hindi mein samjhao”, or “Hinglish mein bolo”.
+- Preserve meaning, names, code, file paths, commands, and technical identifiers during transcription and translation.
+- Handle accents, natural pauses, and common speech variations; ask a short clarification if confidence is too low rather than executing a risky action.
+- Speech recognition, language identification, text normalization, and speech synthesis are separate replaceable capabilities. Measure Hindi, English, and Hinglish quality independently on the target Mac. Do not claim equal accuracy before testing.
+- Wake-word detection for “Ultron” should work independently of the conversational language.
+
+### Installable macOS desktop app plus website
+The primary experience must be an **installable native-feeling macOS desktop app** that the owner can launch from Applications/Dock and use hands-free by saying “Ultron”, without first opening a browser or manually starting a web server. A website/HUD is also required as a companion interface for visible plans, sources, code diffs, task artifacts, settings, and secure approval flows.
+
+- Package the local assistant and its required runtime into a versioned macOS app/installer with clear setup, permissions, upgrade, and uninstall instructions.
+- After the user enables it, an optional login item may start the app at login. Do not silently enable startup or microphone access.
+- Use a lightweight, privacy-conscious local wake-word listener. Keep the microphone indicator/status visible; provide mute/pause/quit controls and clear permission recovery. Prefer local wake-word detection; do not continuously stream microphone audio to a cloud provider just to detect “Ultron”.
+- After wake-word detection, capture the request, process it through the configured local/cloud pipeline, and speak the response. Define timeout, false-wake, interruption, and no-network behavior.
+- The desktop app and website must share the same core/task state and policy boundaries rather than becoming two divergent assistants. The website must remain usable independently for typed interaction and visual review.
+- Bind any local web service to loopback by default, require authentication for protected operations, and retain existing Host/Origin/CSRF protections. Do not expose a local control API to the LAN by default.
+- Local-first does not mean fully offline: disclose which speech/LLM features need internet or cloud credentials and which operations remain local.
+- Website-only access is not an acceptable substitute for the installed voice/wake-word experience. Packaging and wake-word support are roadmap requirements until validated on the actual Mac.
+
+### New acceptance criteria
+- User can speak in Hindi, English, or Hinglish, including Romanized Hindi and Devanagari; the response follows the user's chosen language.
+- Wake-word behavior is tested for all three language contexts, with recognition and false-wake metrics recorded.
+- After installation and explicit microphone permission, saying “Ultron” can start a session without opening a browser. The app exposes visible listening/mute/quit state.
+- The companion website supports typed interaction and visual inspection while using the same authorization policy and task context.
+- Installer, launch-at-login opt-in, upgrade, and uninstall paths are documented and tested on a supported macOS version.
+- Network requirements, audio handling, and local/cloud boundaries are clearly disclosed.
