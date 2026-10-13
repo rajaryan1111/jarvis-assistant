@@ -487,3 +487,37 @@ def test_explain_and_search_never_modify_files_or_execute_code(tmp_path, fake_ru
     assert target.read_bytes() == before_bytes
     assert list(repo.iterdir()) == [target]
     assert fake_runner.calls == []
+
+
+# ============================================================ 14. encoded traversal is never decoded into filesystem access
+@pytest.mark.parametrize(
+    "encoded_path",
+    [
+        "%2e%2e%2foutside",
+        "%2e%2e%5coutside",
+        "..%252f..%252foutside",
+        "%252e%252e%252foutside",
+    ],
+)
+def test_project_tools_never_decode_encoded_traversal_paths(tmp_path, encoded_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text(
+        'OUTSIDE_SENTINEL = "MUST NEVER BE READ"\\n',
+        encoding="utf-8",
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "inside.py").write_text("SAFE_VALUE = 1\\n", encoding="utf-8")
+
+    explain = ProjectExplainTool(root=repo).run({"path": f"{encoded_path}/secret.py"})
+    search = ProjectSearchTool(root=repo).run(
+        {"query": "OUTSIDE_SENTINEL", "path": encoded_path}
+    )
+
+    # These are local filesystem tool arguments, not URL routes: percent-encoded
+    # separators remain literal filename characters and must never become traversal.
+    assert explain.ok is False
+    assert search.ok is False
+    assert "MUST NEVER BE READ" not in explain.message + str(explain.data)
+    assert "MUST NEVER BE READ" not in search.message + str(search.data)
