@@ -168,3 +168,15 @@ Reviewed as design/technology references for ULTRON; no external code, model wei
 **Cross-cutting decision:** keep STT, VAD, language handling, wake-word detection, and TTS as separate replaceable adapters. Preserve local-first processing, explicit disclosure for remote audio, optional heavy dependencies, permission-aware voice controls, and measured language-specific quality. Voice cloning remains opt-in and consent-bound. These are research decisions and proposed acceptance criteria, not implemented features.
 
 Research sources: OmniVoice README/license and Apple Silicon notes; Handy README/license and offline transcription workflow; HeyGen HyperFrames README and project-local agent skill documentation. See docs/research/voice-stack-repository-review.md for the comparative rationale and evaluation checklist.
+
+
+## 13. Adopted development methodology — 2026-10-13
+
+Adapted relevant practices from [obra/superpowers](https://github.com/obra/superpowers) for future Jarvis/ULTRON work. This is a project-specific workflow adaptation, not a claim that the Superpowers plugin is installed or a runtime dependency.
+
+- Always-on project guidance: [AGENTS.md](AGENTS.md).
+- Full workflow, task template, verification and Git safety: [docs/development-workflow.md](docs/development-workflow.md).
+- Key practices: clarify non-trivial requirements; plan exact files/tests; test-first bug fixes; root-cause debugging; small reversible changes; independent review for major changes; fresh verification before completion claims.
+- Preserve existing branches and draft PRs; no unapproved push, merge, deployment, or publication.
+- Keep process proportional: trivial tasks do not need a formal design document or multi-agent workflow.
+- Do not copy Superpowers skill text wholesale. Reuse the ideas in our own project context and preserve its MIT notice if any substantial portions are ever copied.
