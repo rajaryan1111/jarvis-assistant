@@ -219,3 +219,18 @@ Label current implementation, proposed target, and unverified behavior separatel
 - Benchmark Hindi, English, Romanized Hindi, Devanagari and code-switched Hinglish separately. Preserve names, code identifiers, paths, commands and numbers; do not claim parity without measured results.
 - Treat model outputs and transcripts as fallible input. Low-confidence or ambiguous recognition must trigger clarification before a consequential action. Voice recognition is never an approval credential.
 - Do not install, bundle, or enable OmniVoice, Handy, HyperFrames, or their optional dependencies merely because they were researched. Each adoption requires a scoped proposal, license/dependency review, resource measurements, tests, and an explicit milestone decision.
+
+
+## 14. Development workflow rules (required)
+
+Follow [AGENTS.md](AGENTS.md) for the short always-on rules and [docs/development-workflow.md](docs/development-workflow.md) for the full process.
+
+- Inspect the actual repository, branch, HEAD, working tree, relevant docs, and existing tests before editing. Never assume a remembered SHA or reported patch is still current.
+- For non-trivial work, clarify intended behavior and observable acceptance criteria before implementation. Keep trivial, unambiguous changes lightweight.
+- For bug fixes and behavior changes, write a focused regression test first, run it to confirm it fails for the intended reason, implement the minimum fix, and rerun the focused and full relevant suites. If a test-first cycle is impractical, document why and use the strongest available reproducible check.
+- Debug from evidence: reproduce, inspect logs/diffs/data flow, form one hypothesis at a time, and avoid bundled speculative fixes.
+- Before claiming completion, run the actual relevant verification commands on the changed tree; report exact results, skips, failures, and checks not run. A prior CI result or another agent's claim is not fresh verification.
+- Review diffs for scope creep, security/privacy regressions, duplicate side effects, missing cancellation/error paths, and inaccurate status claims.
+- Preserve the user's existing branches and PRs. Never push, merge, deploy, publish, or mutate shared remote state without explicit authorization for that action. Keep unapproved work isolated.
+- Use independent reviewers/agents only when available and when task boundaries are genuinely independent. Verify their artifacts and claims yourself.
+- Prefer YAGNI: do not add abstractions, dependencies, automation, or architecture just because a framework suggests them.
