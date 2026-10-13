@@ -1,5 +1,6 @@
 import os
 import json
+import html
 import datetime
 import subprocess
 import urllib.parse
@@ -391,11 +392,13 @@ def _ddg_result_titles(query: str) -> list:
     url_html = "https://duckduckgo.com/html/?q=" + urllib.parse.quote(query)
     try:
         res = requests.get(url_html, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
+        res.raise_for_status()
         matches = re.findall(r'class="result__a".*?>(.*?)</a>', res.text)  # result__a anchors
     except Exception as e:
         print("Web search error:", type(e).__name__)
         return []
-    return [re.sub("<.*?>", "", m).strip() for m in matches if re.sub("<.*?>", "", m).strip()]
+    titles = [html.unescape(re.sub("<.*?>", "", match)).strip() for match in matches]
+    return [title for title in titles if title]
 
 
 def web_search_ddg(query: str, ctx: CommandContext = None) -> str:
