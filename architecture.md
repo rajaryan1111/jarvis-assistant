@@ -345,3 +345,23 @@ Allow bounded roles such as planner, implementation agent, code reviewer, test a
 
 ### 14.8 Rollout and verification
 Start with local repository read-only analysis, project switching, impact plans and human-reviewed diffs. Next add safe local edits/tests; then GitHub reads and approval-gated writes; then individual provider adapters; then Supabase staging workflows; finally scoped browser automation. Every adapter needs mocked contract tests and real integration smoke tests when credentials are available. Mark capabilities planned, prototype, verified or unavailable, with date and tested version.
+
+## 15. External speech components and adapter boundaries — research proposal (2026-10-13)
+
+Keep the voice pipeline modular rather than adopting an external desktop application as ULTRON's core:
+
+1. **Audio capture / VAD:** local capture, visible listening state, explicit mute/stop/cancel, bounded recording duration, and silence handling.
+2. **STT adapter:** a stable internal contract returning transcript text, detected language/script when available, timestamps/confidence when supported, and structured errors. Handy (https://github.com/cjpais/handy) is a reference for offline-first UX and local transcription choices, not an assumed runtime dependency.
+3. **Language handling:** preserve Hindi, English, Romanized Hindi, Devanagari, and within-utterance code-switching. Keep language identification and text normalization replaceable and testable independently.
+4. **Wake-word adapter:** separate local “Ultron” detection from speech recognition. Wake-word detection must not require continuous cloud audio streaming.
+5. **TTS adapter:** accept text, language preference, and output settings; return audio or a typed failure. OmniVoice (https://github.com/k2-fsa/OmniVoice) is an evaluation candidate for multilingual speech output, not an approved default.
+6. **Playback/session coordinator:** handle interruption, stop, timeout, device errors, and transition from spoken response to HUD transcript without losing task state.
+
+### Candidate selection and integration constraints
+- Use small adapter interfaces and mock-based contract tests; optional ML/audio dependencies must not become mandatory for the existing CLI/API test suite.
+- Evaluate OmniVoice on the actual Apple Silicon Mac using MPS where supported. Record install/model size, first-run download requirements, cold-start time, real-time factor, peak memory, pronunciation quality, and offline behavior. Do not extrapolate GPU benchmarks to the Mac.
+- Evaluate Handy's useful patterns and documented integration surfaces before considering subprocess or IPC integration. Do not assume its CLI is a stable API or that its UI/runtime should be embedded.
+- Keep audio and voice references local by default. Any remote inference must disclose provider, payload category, and retention uncertainty; never transmit audio silently.
+- Voice cloning requires explicit opt-in and permission for the source voice. Store reference audio only with explicit consent, provide deletion controls, and do not imitate a real person to deceive others.
+- HyperFrames (https://github.com/heygen-com/hyperframes) is a separate optional media-generation workflow for project demos, not a dependency of the voice runtime.
+- Mark every adapter planned, prototype, verified, or unavailable. A repository review or successful import is not proof of end-to-end integration.
