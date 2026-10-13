@@ -1,7 +1,7 @@
 # Jarvis / ULTRON — System Architecture
 
 **Status:** Revised v2.0 — collaborative assistant architecture  
-**Product:** Voice-first partner for assignments, research, coding, website/app building, and approved computer tasks  
+**Product:** Trilingual (Hindi/English/Hinglish), voice-first partner with an installable macOS app and companion website  
 **Platform:** macOS first; local capabilities where practical, cloud AI when useful
 
 ## 1. Architectural goals
@@ -202,3 +202,42 @@ Bound model turns, tool calls, output size, context, duration, and retries. Neve
 ## 13. Verification limits
 
 Automated tests do not prove real microphone/camera behavior, macOS permissions, live provider stability, third-party retention policy, research correctness, generated-code correctness, or safe behavior of an untested desktop action. Record environment, commit/working-tree state, checks run, skips, and known gaps.
+
+## 11. Trilingual speech pipeline and installable desktop shell (target architecture)
+
+This section describes the target design, not features that are already verified as implemented.
+
+### Speech and language pipeline
+```text
+macOS microphone
+  -> local wake-word detector ("Ultron")
+  -> explicit listening state / capture request
+  -> speech-to-text (Hindi / English / Hinglish)
+  -> language + script identification and normalization
+  -> shared RequestContext / task coordinator
+  -> existing bounded runtime, provider, policy and ToolRegistry
+  -> response language/style selection
+  -> speech synthesis + optional visible transcript in HUD
+```
+
+- Keep wake-word detection local where practical and do not upload continuous microphone audio just to wait for the wake word.
+- Evaluate speech-to-text choices for Hindi, English, Romanized Hindi, Devanagari, code-switching, technical vocabulary, latency, cost, and offline behavior. Treat each as a measured capability, not a guarantee.
+- Preserve raw transcript and normalized text only as long as required by documented task/debugging settings; do not silently retain recordings.
+- A low-confidence transcript can answer harmless questions only when sensible; before file edits, shell-like actions, external messages, or other consequential steps, confirm intent through the existing trusted approval path.
+- Speech synthesis should select a suitable Hindi/English voice where available, support English technical tokens in mixed speech, and degrade to visible text if unavailable.
+
+### Desktop packaging and website coexistence
+- **Desktop shell:** a signed/versioned macOS application or app bundle with a managed lifecycle, launch/quit controls, microphone permission guidance, visible listening state, and optional user-enabled login startup. Select the packaging/shell technology after inspecting the existing Python and HUD stack; avoid a premature rewrite.
+- **Background service:** use a supervised local process only if needed. Start/stop it with the desktop app, detect stale processes, expose health state, and shut down cleanly.
+- **Website/HUD:** retain as a first-class companion for task plans, sources, artifacts, logs, settings, and secure approval. Typed use must not depend on microphone permission.
+- **Shared core:** both interfaces route to the same runtime, task/session state, provider selection, and ToolRegistry. Never duplicate policy in the UI or create a second bypass path.
+- **Local API:** loopback-only by default, authenticated protected routes, strict Host/Origin/CSRF validation, and no LAN exposure unless separately designed and approved.
+- **Packaging:** versioned releases, clean install/upgrade/uninstall, dependency checks, logs that redact secrets and minimize content, and clear recovery when providers or permissions are unavailable.
+- **Offline/cloud modes:** represent availability per capability (wake word, STT, LLM, TTS, file tools). Never label the whole assistant “offline” merely because the wake word is local.
+
+### Architecture decisions and validation
+1. Inventory current voice path, Flask HUD, config, process lifecycle, and macOS dependencies before choosing packaging technology.
+2. Prototype wake-word listening and measure idle CPU, memory, false activations, wake latency, and privacy/network behavior.
+3. Build a trilingual evaluation set with the owner's consent; include Hindi, English, Hinglish, Romanized Hindi, Devanagari, technical names, and noisy-room examples.
+4. Define one RequestContext language preference that survives voice-to-agent-to-speech flow and can be overridden by the user.
+5. Test the packaged app on a clean macOS account, not only a developer checkout.
