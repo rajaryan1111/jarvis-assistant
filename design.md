@@ -70,7 +70,7 @@ Desired behavior:
 - Helpful recovery for silence, recognition failure, unavailable microphone, provider timeout, or missing credentials.
 - Safe cancellation/interruption where supported.
 - No duplicate spoken response from both API and caller.
-- Natural English baseline with incremental Hinglish support.
+- Natural Hindi, English, and Hinglish support, including Romanized Hindi and Devanagari.
 
 **Approval rule:** Spoken input must never confirm a pending consequential/destructive action. Explain that the user must confirm through the signed-in HUD. Repeating “yes” must not approve it. Ambiguous recognition is never sufficient evidence for a high-impact action.
 
@@ -112,3 +112,43 @@ Measure on the actual Mac:
 - user corrections needed per task.
 
 Set numerical targets after a baseline rather than inventing them.
+
+## 11. Hindi, English, and Hinglish interaction
+
+ULTRON should understand normal conversational language, not just formal commands. Users can mix Hindi and English freely, use Romanized Hindi or Devanagari, and include English technical vocabulary.
+
+Examples:
+- “Ultron, mera Python code debug karo aur error simple Hindi mein samjhao.”
+- “Ultron, explain this assignment in Hinglish, examples ke saath.”
+- “अल्ट्रॉन, मेरे notes से exam-oriented answer बनाओ।”
+- “Ultron, reply in English from now on.”
+- “Ultron, meri website ka mobile layout check karo.”
+
+Behavior:
+- Detect language/script per request and mirror the user's most recent language mix unless they explicitly choose another.
+- Keep technical names, code, paths, URLs, and commands exact.
+- Make language preference easy to override by voice or text.
+- When recognition is ambiguous, show or repeat the interpreted request before a consequential action.
+- Offer a text transcript and editable response when speech recognition or synthesis is weak.
+
+## 12. Installed app and hands-free use
+
+The desired everyday flow is:
+1. Install ULTRON on macOS and grant microphone permission.
+2. Launch it from Applications/Dock; optionally enable launch-at-login.
+3. The app shows a clear idle/listening indicator and waits for the local “Ultron” wake word.
+4. User says a request in Hindi, English, or Hinglish.
+5. ULTRON processes it, speaks the response, and shows useful text/artifacts in the companion HUD.
+6. User can mute, cancel, pause wake listening, or quit at any time.
+
+The app must not require the user to open a browser just to start a voice session. The website remains a companion surface for typed chat, task status, source links, generated artifacts, settings, and secure approvals. Both surfaces share the same backend/runtime and authorization checks.
+
+Visible controls: microphone/listening status, mute, pause wake word, stop speaking, cancel current task, quit, provider/network status, and permission recovery. Login startup is optional and off until the user enables it. Explain whether each capability uses local processing or a cloud service.
+
+## 13. Privacy and multilingual quality
+
+- Prefer local wake-word detection; do not stream idle audio to a cloud service just to listen for “Ultron”.
+- Show a persistent, understandable listening/mute state. Do not silently store audio or transcripts indefinitely.
+- Evaluate Hindi, English, Hinglish, Romanized Hindi, and Devanagari separately, including technical terms and ordinary background noise.
+- Never let voice recognition or a spoken confirmation replace authenticated approval for consequential actions.
+- If a language, voice, or offline mode is not available, say so and offer text fallback rather than pretending it worked.
