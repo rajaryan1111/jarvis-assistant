@@ -234,3 +234,16 @@ Follow [AGENTS.md](AGENTS.md) for the short always-on rules and [docs/developmen
 - Preserve the user's existing branches and PRs. Never push, merge, deploy, publish, or mutate shared remote state without explicit authorization for that action. Keep unapproved work isolated.
 - Use independent reviewers/agents only when available and when task boundaries are genuinely independent. Verify their artifacts and claims yourself.
 - Prefer YAGNI: do not add abstractions, dependencies, automation, or architecture just because a framework suggests them.
+
+
+## 16. Evaluation and dependency-adoption rules — 2026-10-13
+
+- Define a representative, reproducible test/evaluation case before adopting a new model, framework, retrieval engine, database, or orchestration layer.
+- Keep deterministic safety/regression tests separate from optional model-graded evaluations that spend tokens or vary across runs.
+- Evaluate behaviors that matter to ULTRON: unknown/malformed tool rejection, policy boundary enforcement, side-effect retry/idempotency, cancellation/budget limits, honest completion reporting, source fidelity, and citation support.
+- For retrieval changes, compare to a recorded baseline using representative queries/documents. Consider keyword, semantic, and hybrid approaches; add reranking or a new storage service only when evidence demonstrates sufficient benefit.
+- Never infer ULTRON compatibility, accuracy, latency, cost, privacy, or Apple Silicon performance from an upstream demo. Validate on our actual code, representative data, and target Mac where needed.
+- Treat sample repositories as design references, not dependencies. Inspect the exact package/subproject license and security/maintenance posture before copying code; do not copy a complete demo app or its credential/database assumptions blindly.
+- A model-based grader is another fallible model, not a source of truth. Retain explicit expectations, human review for important decisions, and deterministic assertions wherever possible.
+
+Research rationale and rejected options: [awesome-llm-apps review](docs/research/awesome-llm-apps-review.md).
