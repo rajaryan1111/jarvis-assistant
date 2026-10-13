@@ -521,3 +521,21 @@ def test_project_tools_never_decode_encoded_traversal_paths(tmp_path, encoded_pa
     assert search.ok is False
     assert "MUST NEVER BE READ" not in explain.message + str(explain.data)
     assert "MUST NEVER BE READ" not in search.message + str(search.data)
+
+
+def test_project_tools_treat_encoded_separators_as_literal_local_names(tmp_path):
+    repo = tmp_path / "repo"
+    literal_dir = repo / "%2e%2e%2foutside"
+    literal_dir.mkdir(parents=True)
+    (literal_dir / "literal.py").write_text(
+        "LOCAL_LITERAL_SENTINEL = 42\\n",
+        encoding="utf-8",
+    )
+
+    result = ProjectExplainTool(root=repo).run(
+        {"path": "%2e%2e%2foutside/literal.py"}
+    )
+
+    assert result.ok is True
+    assert "LOCAL_LITERAL_SENTINEL" in str(result.data)
+    assert "MUST NEVER BE READ" not in str(result.data)
