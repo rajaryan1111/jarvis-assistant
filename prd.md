@@ -20,7 +20,7 @@ The aim is not simply a chatbot that speaks. It is a collaborative assistant tha
 
 ## 2. Target user and operating context
 
-The initial product is a single-user assistant for its owner on macOS. It should support natural spoken interaction with text/HUD/CLI fallbacks. It should adapt between tutor, research partner, coding partner, and website-building partner without pretending to be infallible.
+The initial product is a single-user assistant for its owner on macOS, designed around the BTech CSE/ECE student journey. It supports natural spoken interaction with text/HUD/CLI fallbacks and adapts between tutor, research partner, coding/hardware partner, hackathon teammate, career coach, life organizer and bounded personal companion without pretending to be infallible.
 
 ## 3. Product principles
 
@@ -28,6 +28,7 @@ The initial product is a single-user assistant for its owner on macOS. It should
 2. **Voice first, not voice only:** speech is the preferred interaction; text and HUD remain reliable controls.
 3. **Reliability before spectacle:** report what happened, what failed, and what remains.
 4. **Local first where practical:** prefer local tools and storage; use cloud AI when it adds value and disclose relevant data flow.
+11. **Whole-student support:** help with engineering and everyday student challenges while preserving autonomy, privacy, and real-world relationships.
 5. **User remains in control:** ask before consequential actions, external publication, deployment, destructive edits, purchases, or sending messages.
 6. **Security outside the model:** model output is a proposal, never authorization.
 7. **Evidence-led work:** distinguish sourced facts, inference, generated drafts, and verified results.
@@ -190,3 +191,67 @@ The primary experience must be an **installable native-feeling macOS desktop app
 - The companion website supports typed interaction and visual inspection while using the same authorization policy and task context.
 - Installer, launch-at-login opt-in, upgrade, and uninstall paths are documented and tested on a supported macOS version.
 - Network requirements, audio handling, and local/cloud boundaries are clearly disclosed.
+
+## 14. Student-life problem map: the BTech journey
+
+ULTRON is also a **student-life companion** for the broad BTech CSE/ECE experience, not only an engineering tutor. It should help with academic, technical, career, social, practical, and personal challenges through useful workflows—not claim to solve every problem or replace human relationships and professional services.
+
+### 14.1 Problem domains and proposed capabilities
+
+| Domain | Common student problems | Proposed ULTRON workflows |
+|---|---|---|
+| Academics and exams | Large syllabus, scattered notes, backlogs, exam anxiety, confusing concepts, teacher-specific answer formats | Source-grounded notes/PDF/QB/PYQ analysis; revision prioritization; easy-language explanations; worked examples; quizzes, flashcards, viva practice and progress tracking |
+| Labs and practicals | Lab records, viva questions, instrument confusion, debugging practicals, incomplete reports | Prepare from lab manuals; explain safe measurement procedures; help interpret errors and readings; organize lab-report drafts; distinguish simulated results from measurements actually taken |
+| CSE learning | DSA confusion, debugging, Git conflicts, databases, APIs, web development, AI/ML and deployment issues | Guided problem solving, repo-aware diagnosis, code review, focused patches, tests, explanations and portfolio-ready documentation |
+| ECE learning | Circuit analysis, analog/digital electronics, 8051/ARM, Verilog/VHDL, FPGA, PCB, sensors, embedded systems, DSP/MATLAB | Explain schematics and datasheets; help calculate and simulate; troubleshoot from supplied evidence; assist with firmware and HDL; distinguish simulation from real hardware verification |
+| Projects and building | Unclear scope, poor architecture, limited budget, integration failures, weak documentation | Idea-to-requirements flow; stack/component choices; task breakdown; project memory; implementation/test loop; budget-aware alternatives; demo and report preparation |
+| Hackathons and competitions | Choosing an idea, tight deadlines, team coordination, hardware/software integration, weak pitches | Compare ideas against novelty, feasibility, impact, time and budget; define MVP; assign owners/dependencies; track blockers; prepare demos, architecture and pitch practice |
+| Teamwork | Unequal contributions, missed deadlines, merge conflicts, disagreements | Shared task/decision log, clear ownership, integration checklist, neutral communication drafts and escalation options |
+| Career and placements | Unclear career direction, skill gaps, DSA/interview pressure, weak resume, missed internships | Role exploration; skill-gap plan; interview practice; truthful resume/project review; opportunity tracker; deadline reminders and application preparation |
+| Research and innovation | Finding trustworthy sources, citations, literature gaps, dataset/method choices, reproducibility | Source-aware literature matrix; citation/provenance tracking; research-question refinement; dataset and experiment logs; transparent distinction between evidence, inference and hypothesis |
+| Productivity | Procrastination, deadline collisions, unrealistic plans, context switching | Time-aware task plans; small next steps; opt-in reminders; progress reviews; safe rescheduling and resume-from-last-state |
+| Friendship and loneliness | Feeling left out, homesickness, social awkwardness, lack of community | Empathetic conversation; low-pressure ways to meet people through clubs/interests; conversation practice; encouragement of real human connection |
+| Dating and relationships | Expressing feelings, conflict, rejection, jealousy, breakups, boundaries | Respectful message drafting; perspective-taking; communication rehearsal; boundary reflection and emotional processing without claiming to know another person's private thoughts |
+| Well-being | Stress, burnout, comparison, fear of failure, confidence dips | Optional check-ins/journaling, grounding exercises, workload reflection and support-seeking prompts; no diagnosis or claim to replace professional care |
+| Money and student living | Limited allowance, hostel routines, food planning, travel and component costs | Opt-in expense/budget planning; affordable options; shopping/packing lists; meal or trip planning based on stated constraints; no unapproved purchases |
+| Everyday administration | Forms, scholarships, registration, attendance, documents and deadlines | Checklist and calendar support, document organization and reminders; verify rules from authoritative sources when needed |
+| Communication and creativity | Viva, presentations, public speaking, English confidence, writing, guitar, photography, video creation | Role-play, presentation/pitch rehearsal, language switching, feedback, practice plans and creative project assistance |
+| Digital safety and accessibility | Phishing, account risks, information overload, accessibility barriers, different learning needs | Safety education, source evaluation, permission explanations, alternative learning formats and user-configured workflows |
+| Life after college | Jobs vs higher study vs research/entrepreneurship, relocation and uncertainty | Compare options against user-stated goals, costs, constraints and evidence; help form experiments and decision plans without pretending to predict the future |
+
+### 14.2 CSE/ECE and interdisciplinary focus
+
+ULTRON should support both shared engineering workflows and branch-specific tools. CSE examples include algorithms, software engineering, APIs, databases, AI/ML, cybersecurity and deployment. ECE examples include circuits, electronics, microcontrollers, embedded firmware, HDL/FPGA, DSP, signal processing, sensors and PCB workflows. Interdisciplinary projects can connect software with robotics, IoT, computer vision, edge AI and sensor systems.
+
+For hardware and lab work, ULTRON must label whether a result is theoretical, simulated, inspected from logs, or physically measured. It must never claim a board, circuit, or instrument works without appropriate evidence.
+
+### 14.3 Student context and consent
+
+- Support separate contexts for courses, projects, hackathons, career preparation, personal planning and private reflection.
+- Store only approved useful memory; let the student inspect, correct, export and delete it.
+- Make calendar, reminders, expense tracking, mood check-ins, audio, screenshots and other sensitive integrations opt-in.
+- Keep private relationship and well-being conversations out of shared project/team workspaces unless the user explicitly moves selected content.
+- Let the student switch between “just listen”, “help me think”, “make a plan”, and “take an approved action”.
+- Do not optimize every interaction for productivity; rest, social connection and doing nothing can be valid user goals.
+
+### 14.4 Trust and well-being boundaries
+
+ULTRON may offer supportive conversation, reflection and practical options, but must not present itself as a human, exclusive relationship, therapist, doctor, financial adviser or guaranteed career authority. Encourage appropriate trusted-person or professional support for persistent/severe distress. Never foster emotional dependency, shame the user, or claim to know what another person secretly feels. Relationship help must respect consent and privacy and must not assist stalking, manipulation or surveillance.
+
+Financial planning must be transparent and based on user-provided assumptions; purchases or financial transactions require explicit authorization. Academic help should support learning and follow course rules; do not fabricate experiments, citations, credentials or work performed.
+
+### 14.5 Student-life acceptance criteria
+
+- A student can create distinct course/project/personal contexts and inspect or delete saved memory.
+- The assistant can turn a deadline list into a realistic plan and revise it when time or priorities change.
+- Course answers can be grounded in supplied notes, with source gaps called out.
+- Hackathon planning captures time, budget, team skills, dependencies, MVP and demo evidence.
+- CSE/ECE workflows distinguish proposed code/simulations from tests and physical measurements.
+- Career advice states assumptions and uncertainty and never invents achievements or guarantees placements.
+- Optional personal features are opt-in, private by default and easy to disable.
+- Relationship and well-being workflows preserve autonomy, consent and real-world support.
+- Each workflow has tests for honest status, privacy, cancellation and permission boundaries.
+
+## 15. Expanded success measures
+
+In addition to the engineering acceptance criteria, measure task completion and student value: time required to find the next study step; correctness and source fidelity of notes-based answers; hackathon milestone visibility; test/verification accuracy; reminder usefulness; student-rated clarity and emotional tone; and ease of correcting/deleting memory. Use opt-in feedback and privacy-preserving aggregate metrics. Do not infer sensitive traits or score a student's emotional state without explicit consent.
