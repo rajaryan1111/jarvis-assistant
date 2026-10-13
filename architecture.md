@@ -381,3 +381,12 @@ Keep evaluation separate from runtime orchestration. Maintain deterministic test
 For local knowledge retrieval, treat keyword search, semantic search, hybrid search, and reranking as competing strategies behind a replaceable interface—not mandatory layers. Establish a representative query/document baseline first, compare retrieval quality and unsupported-answer rate, and add reranking only when it improves measured outcomes enough to justify latency and dependencies. Keep source document and page/section/chunk provenance connected to retrieved evidence and expose it to the answer/report layer.
 
 Knowledge graphs, a new vector database, or multi-agent research are deferred until representative tasks show a specific limitation the existing design cannot address. See [the awesome-llm-apps review](docs/research/awesome-llm-apps-review.md). This is an evolution policy, not a statement that hybrid retrieval/evaluations are already implemented.
+
+
+## 19. Task event history, budgets, and audit boundary — 2026-10-13
+
+The task/session coordinator should emit structured lifecycle events keyed by task/correlation ID: accepted, planned, provider interaction, tool proposal, policy decision, approval, tool start/end, cancellation, error, and final status. Store only minimal diagnostic metadata, redact secrets, and do not persist raw audio, transcript, screenshot, prompts, document contents, or tool payloads by default. Observability consumers may render recorded facts but must not infer unrecorded work.
+
+A single cumulative budget object should flow through every loop and delegated call. It should cap steps, elapsed time, retries, output/context, and optional provider token/spend values where trustworthy. Budget exhaustion terminates new work but preserves completed results and labels the final report partial. Side-effecting tools require idempotency/reconciliation semantics independent of transport retry behavior.
+
+When persistent auditing is added, use project-scoped storage, restrictive permissions, bounded retention/rotation, and defined behavior for write errors, disk-full, invalid paths, concurrent writers, and recovery. Decide per risk tier whether audit persistence is mandatory before an action; do not silently claim that ordinary logs are tamper-proof. Keep the central registry/policy as the only authorization boundary. See [Ruflo review](docs/research/ruflo-review.md).
