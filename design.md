@@ -250,3 +250,17 @@ Provide dry-run, cancel, stop, safe retry and rollback controls where supported.
 Distinguish “On this Mac” (local files/Git, allowlisted commands, project index, policy/approval), “Sent to provider” (named AI service and context shared), and “External effect” (service read or changed).
 
 Show microphone/wake-word state continuously. Local orchestration/wake-word detection does not guarantee cloud speech recognition, AI reasoning or speech synthesis is offline.
+
+## 16. Voice engine settings and privacy feedback — research proposal (2026-10-13)
+
+The voice settings surface should make engine choices and data flow understandable without exposing model internals to ordinary users.
+
+- Provide separate settings for speech recognition, language handling, wake word, and speech output; show the active engine and whether it is local, remote, or mixed.
+- Include push-to-talk as a reliable fallback to wake-word use. Recording state must be visible, with obvious stop, mute, cancel, and retry controls.
+- Display permission, model-download, offline, and device errors in plain language. Preserve typed HUD interaction when audio is unavailable.
+- Let the user choose response language (automatic, Hindi, English, Hinglish) and speech output where supported. Do not imply an engine supports a language until tested.
+- Voice-cloning controls, if ever introduced, must be off by default and separate from ordinary voice selection. Explain reference-audio handling, require confirmation of permission, and provide deletion controls.
+- Do not show a “private/local” badge unless the current operation's audio/transcript processing path is actually local. Clearly label when audio or text leaves the device.
+- A future demo-video workflow using HyperFrames belongs in project artifacts, not voice settings; it is optional and requires a separate user-requested task.
+
+These are proposed UX requirements. They are not evidence that the current HUD already exposes these controls.
