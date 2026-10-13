@@ -722,3 +722,74 @@ def test_asking_is_still_required_when_no_tool_can_supply_the_missing_detail(leg
     report = runtime(legacy, groq(stub), ["demo.remind"]).run("Set a reminder.", owner_hud())
     assert (report.status, report.stop_reason) == ("needs_input", "asked_user") and added == []
     assert len(stub.requests) == 1
+
+
+def test_output_parse_failed_after_failed_tool_recovers_accurately_and_never_claims_success(legacy, stub):
+    register(legacy, "demo.remind", RiskTier.ROUTINE,
+             lambda _a: ToolResult(False, "Could not parse reminder time."), QUERY_ARGS)
+    stub.script(
+        groq_completion(tool_calls=[("call_g1", model_name("demo.remind"), json.dumps({"query": "sometime"}))]),
+        output_parse_failed(),
+        groq_completion(tool_calls=[finish_call("call_g3", "Reminder was set.", evidence="c1")]),
+    )
+    report = runtime(legacy, groq(stub), ["demo.remind"]).run("Remind me sometime", owner_hud())
+    assert report.status == "incomplete" and report.verified is False
+    assert "Reminder was set." not in report.reply
+    assert any("did not succeed" in p for p in report.problems)
+
+
+def test_malformed_turn_followed_by_unbacked_finish_or_plain_text_is_never_verified_completed(legacy, stub):
+    register(legacy, "demo.light", RiskTier.ROUTINE, lambda _a: ToolResult(True, "on"))
+    stub.script(
+        tool_use_failed(),
+        groq_completion(tool_calls=[finish_call("call_g2", "I turned on the lamp.")]),
+    )
+    report = runtime(legacy, groq(stub), ["demo.light"]).run("turn on the lamp", owner_hud())
+    assert report.status == "incomplete" and report.verified is False
+    assert "no tool call succeeded" in report.problems
+
+    stub.script(
+        output_parse_failed(),
+        groq_completion("I have turned on the lamp for you."),
+    )
+    report2 = runtime(legacy, groq(stub), ["demo.light"]).run("turn on the lamp", owner_hud())
+    assert report2.status == "incomplete" and report2.verified is False
+    assert "no tool call succeeded" in report2.problems
+
+
+def test_ambiguous_retry_with_different_arguments_after_malformed_turn_is_refused(legacy, stub):
+    ran = []
+    register(legacy, "demo.remind", RiskTier.ROUTINE,
+             lambda a: ran.append(a["query"]) or ToolResult(True, f"set: {a['query']}"), QUERY_ARGS)
+    stub.script(
+        groq_completion(tool_calls=[("call_g1", model_name("demo.remind"),
+                                     json.dumps({"query": "in 10 minutes to stretch"}))]),
+        output_parse_failed(),
+        # Model tries to re-run the same side-effecting tool with paraphrased arguments during recovery:
+        groq_completion(tool_calls=[("call_g3", model_name("demo.remind"),
+                                     json.dumps({"query": "in 10 mins stretch"}))]),
+        groq_completion(tool_calls=[finish_call("call_g4", "Reminder set to stretch in 10 minutes.", evidence="c1")]),
+    )
+    report = runtime(legacy, groq(stub), ["demo.remind"]).run("remind me in 10 minutes to stretch", owner_hud())
+    assert ran == ["in 10 minutes to stretch"]
+    assert [(s.tool, s.status) for s in report.steps] == [
+        ("demo.remind", "completed"),
+        (MALFORMED_OUTPUT, "invalid"),
+        ("demo.remind", "refused"),
+    ]
+    assert report.status == "completed" and report.verified is True
+
+    # If the model instead asks the user whether they wanted a second reminder, Done so far is preserved:
+    stub.script(
+        groq_completion(tool_calls=[("call_g1", model_name("demo.remind"),
+                                     json.dumps({"query": "in 10 minutes to stretch"}))]),
+        output_parse_failed(),
+        groq_completion(tool_calls=[("call_g3", model_name("demo.remind"),
+                                     json.dumps({"query": "in 10 mins stretch"}))]),
+        groq_completion(tool_calls=[ask_user_call("call_g4")]),
+    )
+    report_ask = runtime(legacy, groq(stub), ["demo.remind"]).run("remind me", owner_hud())
+    assert report_ask.status == "needs_input" and report_ask.stop_reason == "asked_user"
+    assert report_ask.reply.startswith("Done so far: demo.remind: set: in 10 minutes to stretch.")
+
+

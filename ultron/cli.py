@@ -377,6 +377,13 @@ def _cmd_agent(args: argparse.Namespace) -> int:
         return 130
     report = next((value for kind, value in reversed(ctx.events) if kind == "agent_report"), None)
     print(reply)
+    if report is not None and (report.error or report.stop_reason in ("invalid_calls", "output_limit_no_answer")):
+        details = [f"{k}={v}" for k, v in (
+            ("error", report.error),
+            ("code", report.error_code),
+            ("stop", report.stop_reason),
+        ) if v]
+        print(f"  [{', '.join(details)}]", file=sys.stderr)
     if report is not None and args.steps:
         for step in report.steps:
             print(f"  {step.call_id} {step.tool}: {step.status} - {step.message}")

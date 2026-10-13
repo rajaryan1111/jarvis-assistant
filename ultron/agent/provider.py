@@ -348,8 +348,10 @@ def _parse_response(response: Any) -> ModelTurn:
         name = getattr(function, "name", None)
         arguments = getattr(function, "arguments", None)
         call_id = getattr(raw, "id", None)
-        if not isinstance(name, str) or not isinstance(call_id, str) or not call_id:
+        if not isinstance(name, str) or not name.strip() or not isinstance(call_id, str) or not call_id:
             raise ProviderError("bad_response", "The language model returned a malformed tool call.")
+        if arguments is not None and not isinstance(arguments, str):
+            raise ProviderError("bad_response", "The language model returned malformed tool call arguments.")
         calls.append(ToolCall(id=call_id, name=name, arguments=arguments if isinstance(arguments, str) else ""))
     usage = getattr(response, "usage", None)
     return ModelTurn(

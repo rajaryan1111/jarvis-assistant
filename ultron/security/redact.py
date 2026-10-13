@@ -25,7 +25,7 @@ _TOKEN_PATTERNS = (
     re.compile(r"\bgsk_[A-Za-z0-9]{16,}"),  # Groq API keys
 )
 
-_EXTRA_SECRET_ENV = ("ULTRON_API_TOKEN",)
+_EXTRA_SECRET_ENV = ("ULTRON_API_TOKEN", "ULTRON_CLIENT_TOKEN")
 
 
 def _known_secret_values() -> list[str]:
