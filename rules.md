@@ -221,7 +221,7 @@ Label current implementation, proposed target, and unverified behavior separatel
 - Do not install, bundle, or enable OmniVoice, Handy, HyperFrames, or their optional dependencies merely because they were researched. Each adoption requires a scoped proposal, license/dependency review, resource measurements, tests, and an explicit milestone decision.
 
 
-## 14. Development workflow rules (required)
+## 16. Development workflow rules (required)
 
 Follow [AGENTS.md](AGENTS.md) for the short always-on rules and [docs/development-workflow.md](docs/development-workflow.md) for the full process.
 
