@@ -323,3 +323,15 @@ Passing deterministic tests does not prove live provider, microphone, speech, ca
 - [ ] Document measured benefit, new failure modes, cost, rollback, license, and data-flow implications.
 
 These are proposed exit criteria, not claims of completed implementation. Full rationale: [awesome-llm-apps review](docs/research/awesome-llm-apps-review.md).
+
+
+## 19. Runtime observability and budget milestone — 2026-10-13
+
+- [ ] Define a minimal structured task-event schema with task/correlation IDs and explicit execution statuses.
+- [ ] Add secret/content redaction and tests proving sensitive payloads are not persisted by default.
+- [ ] Define one cumulative budget across model calls, tool calls, retries, duration, and output/context size; preserve artifacts and explicit partial status on exhaustion.
+- [ ] Add deterministic tests for cancellation, uncertain side-effect outcomes, duplicate execution prevention, and action-specific approval binding.
+- [ ] Add keyless integration smoke tests using provider/tool stubs; place live-provider and actual-Mac checks in separate optional suites with clear statuses and cost caps.
+- [ ] Before requiring audit logs for consequential actions, specify bounded retention, permissions, write-failure behavior, rotation/concurrency handling, and recovery.
+
+Do not add a telemetry platform, cost database, external orchestrator, or swarm subsystem for this milestone. Start with the smallest mechanism that makes tasks debuggable. These criteria are planned, not marked complete; see [Ruflo review](docs/research/ruflo-review.md).
