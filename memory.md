@@ -22,7 +22,7 @@
 - Last-known head for `m2.2.1-groq-fixes`: `e7789d8a5f78ed12e49a26d233fc260173b20c64`.
 - Preserve all branches and PRs. Remote actions require explicit authorization; report actual GitHub results.
 - Documentation branch `docs/project-foundation-v1` was created from `main` and contains the original six documents, commit `d43552128372338865e1a032cd64e6ea6b6697a4`.
-- The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`. The expanded student-life vision is being added on `docs/student-life-companion-v4`.
+- The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`. The expanded student-life vision is on `docs/student-life-companion-v4`.
 
 ## 3. Architecture summary
 
