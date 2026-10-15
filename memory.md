@@ -21,12 +21,12 @@
 - Current verified `main` head (2026-10-16): `88dabc6cd41a6f71082db9b48aaa2a48e3cfc6a2`.
 - PR #4 (ensemble integration), #5 (security/agent foundation), and #6 (local provider, racing, AutoTune, Smart Router) are merged. PR #2 and #3 are closed/merged as their commits are represented in `main`.
 - Latest `main` CI run: https://github.com/rajaryan1111/jarvis-assistant/actions/runs/38826067567 — 4/4 Python 3.10–3.13 jobs passed on the exact `main` head. The PR #4 integration head also passed 4/4: https://github.com/rajaryan1111/jarvis-assistant/actions/runs/38825978177.
-- No open PRs were found during the 2026-10-16 recheck. These statements are point-in-time and should be reverified before future merges.
+- Before this handoff PR was opened, no open PRs were found during the 2026-10-16 recheck. This is point-in-time state and should be reverified before future merges.
 - Live OpenAI/Groq/Ollama provider behavior and target-Mac voice/hardware behavior have not been verified by these CI runs.
 - No `LICENSE` file has been added. The G0DM0D3 reference is AGPL-3.0; do not copy its source/prompts/scoring tables wholesale or imply the licensing question is resolved. Keep new implementation original and flag distribution/licensing for owner decision.
 - Preserve existing branches and PRs; remote actions require explicit authorization. Report actual GitHub results.
 - Historical documentation branches (`docs/project-foundation-v1`, `docs/ultron-collaborative-assistant-v2`, `docs/ultron-trilingual-desktop-v3`, `docs/student-life-companion-v4`) remain historical context; do not assume any is current or merged without checking.
-- The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`. The expanded student-life vision is on `docs/student-life-companion-v4`.
+- Historical document branches and their contents are listed above; check their current GitHub state before relying on them.
 
 ## 3. Architecture summary
 
