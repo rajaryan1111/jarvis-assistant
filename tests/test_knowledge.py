@@ -75,3 +75,23 @@ def test_knowledge_handles_malformed_index_and_empty_llm_reply(monkeypatch, tmp_
     fallback = knowledge.answer_from_knowledge("shortest path", openai_client=empty_client)
     assert "algorithms.md#chunk-2" in fallback
     assert "priority queue" in fallback
+
+def test_knowledge_rebuild_skips_symlinked_files_outside_docs_root(monkeypatch, tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "inside.md").write_text("Dijkstra finds the shortest path.", encoding="utf-8")
+    outside = tmp_path / "private.txt"
+    outside.write_text("OUTSIDE_PRIVATE_SENTINEL", encoding="utf-8")
+    (docs / "external.txt").symlink_to(outside)
+    index_file = tmp_path / "index.json"
+
+    monkeypatch.setattr(knowledge, "DOCS_DIR", str(docs))
+    monkeypatch.setattr(knowledge, "INDEX_FILE", str(index_file))
+    monkeypatch.setattr(knowledge, "_get_model", lambda: _FakeEmbedModel())
+
+    message = knowledge.rebuild_knowledge_base()
+    assert "indexed 1 chunks from 1 files" in message
+    saved = json.loads(index_file.read_text(encoding="utf-8"))
+    assert all("OUTSIDE_PRIVATE_SENTINEL" not in entry["text"] for entry in saved["entries"])
+    assert all(Path(entry["source"]).resolve().is_relative_to(docs.resolve()) for entry in saved["entries"])
+
