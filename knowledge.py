@@ -54,16 +54,34 @@ def _ensure_docs_dir():
 
 def _list_documents():
     """
-    List all supported files inside knowledge_docs/.
-    Supported: .pdf, .txt, .md
+    List supported documents contained within the configured knowledge directory.
+    Supported: .pdf, .txt, .md. Symlink targets outside the root are excluded.
     """
     _ensure_docs_dir()
+    try:
+        docs_root = Path(DOCS_DIR).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return []
+
     exts = (".pdf", ".txt", ".md")
     files = []
-    for root, dirs, fs in os.walk(DOCS_DIR):
-        for f in fs:
-            if f.lower().endswith(exts):
-                files.append(os.path.join(root, f))
+    for root, dirs, fs in os.walk(docs_root, followlinks=False):
+        # os.walk does not descend directory symlinks by default; prune them
+        # explicitly so this remains true if traversal behavior is changed.
+        dirs[:] = [name for name in dirs if not (Path(root) / name).is_symlink()]
+        for name in fs:
+            if not name.lower().endswith(exts):
+                continue
+            candidate = Path(root) / name
+            try:
+                resolved = candidate.resolve(strict=True)
+                if not resolved.is_relative_to(docs_root) or not resolved.is_file():
+                    continue
+            except (OSError, RuntimeError):
+                # Broken links, symlink loops, and inaccessible paths are not
+                # valid knowledge sources.
+                continue
+            files.append(str(candidate))
     return files
 
 
