@@ -67,6 +67,13 @@ status lines; and wire-level tests driving the real SDK against the loopback stu
 (`tests/openai_stub.py`): turn/usage mapping, tool-call parsing, HTTP-error and timeout mapping,
 unreachable-server handling. Existing OpenAI/Groq behaviour is asserted unchanged.
 
+Owners with a running local server can opt in to the real thing (never runs in CI; skipped
+with start instructions when the server is down, free — prompts stay on the machine):
+
+```
+ULTRON_LIVE_OLLAMA=1 uv run pytest tests/live -p no:cacheprovider
+```
+
 ## Provenance and licensing
 
 The *concepts* — an OpenAI-compatible local-server provider restricted to loopback, a local-only

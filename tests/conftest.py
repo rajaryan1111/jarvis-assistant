@@ -32,7 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # are scrubbed below. Capture them first, only when explicitly opted in, and hand them to the
 # live tests through the ``live_env`` fixture (never through os.environ, so every other test
 # in the same session still runs without credentials).
-LIVE_OPT_INS = {"ULTRON_LIVE_OPENAI": "openai", "ULTRON_LIVE_GROQ": "groq"}
+LIVE_OPT_INS = {"ULTRON_LIVE_OPENAI": "openai", "ULTRON_LIVE_GROQ": "groq", "ULTRON_LIVE_OLLAMA": "ollama"}
 
 
 def capture_live_env(environ, dotenv_path: Path) -> dict[str, str]:

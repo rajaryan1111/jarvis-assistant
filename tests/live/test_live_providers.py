@@ -1,10 +1,17 @@
 """Opt-in live tests: a real model provider through the real agent runtime.
 
-M2.1 added OpenAI; M2.2 adds Groq. Each provider is opted in separately and everything is
-skipped by default (never in CI):
+M2.1 added OpenAI; M2.2 adds Groq; M2.3 adds the local Ollama provider. Each provider is
+opted in separately and everything is skipped by default (never in CI):
 
     ULTRON_LIVE_OPENAI=1 uv run pytest tests/live -p no:cacheprovider    # OPENAI_API_KEY
     ULTRON_LIVE_GROQ=1   uv run pytest tests/live -p no:cacheprovider    # GROQ_API_KEY
+    ULTRON_LIVE_OLLAMA=1 uv run pytest tests/live -p no:cacheprovider    # local server, no key, free
+
+Ollama needs ``ollama serve`` running and the model pulled (``ULTRON_OLLAMA_MODEL``, default
+``llama3.1:latest``); when the local server is unreachable the scenarios are *skipped* with
+start instructions, never failed. Prompts stay on the machine (loopback-validated base URL).
+Local models vary in tool-calling reliability: a scenario failure on a small local model is an
+honest result about that model, not about the runtime.
 
 * Keys and model settings come from your environment or ``.env`` (captured by
   tests/conftest.py only when opted in; every other test still runs without credentials).
@@ -47,13 +54,15 @@ from ultron.security.policy import Channel, CommandContext, RiskTier
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
 from ultron.tools.registry import ToolRegistry
 
-# provider -> (opt-in flag, credential)
-PROVIDERS = {"openai": ("ULTRON_LIVE_OPENAI", "OPENAI_API_KEY"), "groq": ("ULTRON_LIVE_GROQ", "GROQ_API_KEY")}
+# provider -> (opt-in flag, credential; "" = no credential exists)
+PROVIDERS = {"openai": ("ULTRON_LIVE_OPENAI", "OPENAI_API_KEY"), "groq": ("ULTRON_LIVE_GROQ", "GROQ_API_KEY"),
+             "ollama": ("ULTRON_LIVE_OLLAMA", "")}
 OPTED_IN = {name for name, (flag, _) in PROVIDERS.items() if os.environ.get(flag, "").strip() == "1"}
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(not OPTED_IN, reason="live provider tests are opt-in: set ULTRON_LIVE_OPENAI=1 "
-                                            "(OPENAI_API_KEY) or ULTRON_LIVE_GROQ=1 (GROQ_API_KEY); a few cents"),
+                                            "(OPENAI_API_KEY), ULTRON_LIVE_GROQ=1 (GROQ_API_KEY; a few cents) "
+                                            "or ULTRON_LIVE_OLLAMA=1 (local server, free)"),
 ]
 
 LIMITS = AgentLimits(max_steps=5, max_tool_calls=5, max_calls_per_tool=3, model_timeout=25, tool_timeout=5,
@@ -101,6 +110,8 @@ class Session:
 def build_provider(name: str, config, key: str, env: dict) -> OpenAIChatProvider:
     if name == "groq":
         provider = create_provider(config, groq_api_key=key)  # always the fixed Groq endpoint
+    elif name == "ollama":
+        provider = create_provider(config)  # loopback base URL from the config; no credential exists
     else:
         import openai
 
@@ -111,18 +122,36 @@ def build_provider(name: str, config, key: str, env: dict) -> OpenAIChatProvider
     return provider
 
 
+def require_local_server(config) -> None:
+    """Skip (never fail) when the owner's local model server is not up: honest precondition."""
+    import urllib.request
+
+    url = config.ollama_base_url.rstrip("/") + "/models"  # loopback-validated in load_agent_config
+    try:
+        with urllib.request.urlopen(url, timeout=3):  # noqa: S310 - scheme+host validated, loopback only
+            return
+    except OSError as exc:
+        pytest.skip(f"ollama: local server not reachable at {config.ollama_base_url} ({type(exc).__name__}); "
+                    "start it with `ollama serve` and pull the model (see docs/M2_3_LOCAL_PROVIDER.md)")
+
+
 @pytest.fixture(scope="module", params=sorted(PROVIDERS))
 def live(request, live_env):
     name = request.param
     flag, key_name = PROVIDERS[name]
     if name not in OPTED_IN:
         pytest.skip(f"{name}: set {flag}=1 to run")
-    key = get_credential(key_name, live_env)
-    if not key:
-        pytest.fail(f"{flag}=1 but {key_name} is not set (environment or .env). Nothing was sent.", pytrace=False)
     if live_env.get("OPENAI_LOG", "").lower() == "debug":
         pytest.fail("Unset OPENAI_LOG=debug for live tests: SDK debug logs include request details.", pytrace=False)
     config = load_agent_config({**live_env, "ULTRON_PROVIDER": name})
+    if name == "ollama":
+        require_local_server(config)  # skips with start instructions when the server is down
+        key = ""
+    else:
+        key = get_credential(key_name, live_env)
+        if not key:
+            pytest.fail(f"{flag}=1 but {key_name} is not set (environment or .env). Nothing was sent.",
+                        pytrace=False)
     limits = LIMITS if name == "openai" else dataclasses.replace(LIMITS, max_output_tokens=config.max_output_tokens)
     session = Session(name, build_provider(name, config, key, live_env), config.model, limits, live_env,
                       pause=pause_seconds(live_env))
@@ -320,6 +349,8 @@ def test_live_unknown_model_is_a_clean_rejection(live):
 
 
 def test_live_bad_key_is_a_clean_auth_error(live):
+    if not PROVIDERS[live.name][1]:
+        pytest.skip("ollama has no credential to invalidate; the local server ignores auth")
     # Sent to the provider on purpose; not a credential.
     bogus = ("gsk" + "_ultron-live-test-" if live.name == "groq" else "sk" + "-ultron-live-test-") + "invalid"
     provider = live.provider_for(key=bogus, model=live.model)
