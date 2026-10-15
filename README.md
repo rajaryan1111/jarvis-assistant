@@ -146,7 +146,15 @@ the recorded tool results support it. After reading web, news, weather or Wikipe
 that run needs your approval in the HUD. Settings (`ULTRON_AGENT_*`) and limitations:
 [docs/M2_0_AGENT_LOOP.md](docs/M2_0_AGENT_LOOP.md).
 
-**What goes to the model provider (OpenAI or Groq):** your request text and the results of the tools used in that run. That can include
+**Compare several models (opt-in):** `uv run ultron race "your question"` asks the configured providers the
+same question in parallel — bounded (max 4 models, one overall deadline, per-model timeout, character caps),
+advisory-only (no tools, nothing executed) and honest about disagreement: agreement between models is never
+treated as verification, contradictions stay unresolved, and an optional single judge call can weigh the
+answers against evidence **you** provide (`--evidence FILE`). `ULTRON_LOCAL_ONLY=1` is enforced: a requested
+cloud racer refuses the whole race. Limits, privacy boundaries and synthesis rules:
+[docs/M2_4_MODEL_RACING.md](docs/M2_4_MODEL_RACING.md).
+
+**What goes to the model provider (OpenAI, Groq or a local Ollama server):** your request text and the results of the tools used in that run. That can include
 your notes or reminders if the model lists them, plus weather, news and system status. It never includes
 keys, tokens, cookies, files, screenshots, audio or past conversations. A typical request is 2–4 model calls
 (roughly 4–10k tokens), and every run stops at 30k tokens. Details, costs and troubleshooting:

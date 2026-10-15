@@ -22,6 +22,8 @@ Commands
                    (asks you to type DISABLE unless --yes is given)
   agent "<objective>"  run the bounded agent loop once as the local shell user: read-only and
                    routine tools only (anything that needs approval is refused here; use the HUD)
+  race "<question>"  ask several configured models the same question in parallel (bounded,
+                   advisory, never executes anything) and print an evidence-based comparison
 """
 
 from __future__ import annotations
@@ -426,6 +428,26 @@ def build_parser() -> argparse.ArgumentParser:
                       help="append validated records from FILE (JSONL); invalid lines are skipped")
     hist.add_argument("--clear", action="store_true", help="delete the local transcript file")
     hist.set_defaults(func=_cmd_history)
+    race = sub.add_parser("race", help="ask several configured models the same question (bounded, "
+                                       "advisory comparison; docs/M2_4_MODEL_RACING.md)",
+                          description="Bounded, advisory multi-model comparison: every answer is "
+                                      "untrusted data, nothing is executed, and agreement between "
+                                      "models is never treated as verification.")
+    race.add_argument("objective", nargs="+", help="the question to race, in plain words")
+    race.add_argument("--models", metavar="LIST",
+                      help="comma-separated provider[:model] entries (default: the usable configured "
+                           "providers; max 4, default cap 3)")
+    race.add_argument("--deadline", type=float, metavar="S",
+                      help="overall wall-clock budget for the race (default 45, clamped 5..120)")
+    race.add_argument("--timeout", type=float, metavar="S",
+                      help="per-model call timeout (default 20, clamped 2..300, never above the deadline)")
+    race.add_argument("--evidence", metavar="FILE",
+                      help="local text file the judge may use as evidence (redacted, capped, judge only)")
+    race.add_argument("--judge", metavar="PROVIDER[:MODEL]",
+                      help="run one bounded synthesis call on this provider (default: only when "
+                           "--evidence is given, on a usable non-racer)")
+    race.add_argument("--json", action="store_true", help="print the machine-readable report")
+    race.set_defaults(func=_cmd_race)
     return parser
 
 
@@ -456,6 +478,57 @@ def _cmd_history(args: argparse.Namespace) -> int:
         text = str(item["text"]).replace("\n", " ")
         print(f"  [{item['role']}] {text[:100]}{'…' if len(text) > 100 else ''}")
     return 0
+
+
+def _cmd_race(args: argparse.Namespace) -> int:
+    import json
+    from dataclasses import asdict
+
+    from ultron.agent import race as race_mod
+
+    env = dict(os.environ)
+    if args.deadline is not None:
+        env["ULTRON_RACE_DEADLINE"] = str(args.deadline)  # clamped inside resolve_race
+    if args.timeout is not None:
+        env["ULTRON_RACE_TIMEOUT"] = str(args.timeout)
+    specs = [part.strip() for part in args.models.split(",") if part.strip()] if args.models else None
+    plan = race_mod.resolve_race(env, specs)
+    for problem in plan.problems:
+        print(f"[race] {problem}")
+    if plan.refused:
+        print(f"[race] REFUSED: {plan.refused}", file=sys.stderr)
+        return 1
+    if not plan.racers:
+        print("[race] no usable race providers; nothing was sent", file=sys.stderr)
+        return 1
+
+    evidence = ""
+    if args.evidence:
+        path = Path(args.evidence).expanduser()
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                evidence = handle.read(race_mod.RACE_MAX_EVIDENCE_CHARS * 2)
+        except OSError as exc:
+            print(f"[race] cannot read the evidence file: {type(exc).__name__}", file=sys.stderr)
+            return 1
+    judge = None
+    if args.judge or evidence:
+        judge_problems: list[str] = []
+        judge = race_mod.resolve_judge(env, args.judge, plan.racers, judge_problems)
+        for problem in judge_problems:
+            print(f"[race] {problem}")
+        if evidence and judge is None:
+            print("[race] evidence was given but no judge provider is usable; the evidence was "
+                  "NOT sent anywhere", file=sys.stderr)
+
+    report = race_mod.run_race(" ".join(args.objective), plan)
+    if judge is not None:
+        report = race_mod.with_judge_synthesis(report, judge, evidence)
+    if args.json:
+        print(json.dumps(asdict(report), indent=2, ensure_ascii=False))
+    else:
+        print(race_mod.render(report))
+    return 0 if report.answers else 1
 
 
 def main(argv: list[str] | None = None) -> int:
