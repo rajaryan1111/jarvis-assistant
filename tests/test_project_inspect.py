@@ -470,7 +470,13 @@ def test_literal_percent_and_double_dot_names_are_preserved_without_escaping_roo
     # Before creating literal encoded directories inside repo, encoded-looking paths do not
     # escape to tmp_path / "outside"; they simply do not exist inside repo.
     tool = ProjectInspectTool(root=repo, runner=FakeRunner())
-    for literal_missing in ("..%2F..%2Foutside", "%2e%2e%2foutside", "%252e%252e%252foutside"):
+    for literal_missing in (
+        "..%2F..%2Foutside",
+        "%2e%2e%2foutside",
+        "%2e%2e%5coutside",
+        "..%252f..%252foutside",
+        "%252e%252e%252foutside",
+    ):
         missing_res = tool.run({"path": literal_missing})
         assert missing_res.ok is False
         assert missing_res.data["reason"] == "not_found"

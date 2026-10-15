@@ -285,6 +285,15 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     print(f"[--]   models: chat={load_chat_model()} (OpenAI) agent={agent.model} ({agent.provider}); "
           f"live checks: docs/M2_1_REAL_MODEL_VALIDATION.md, docs/M2_2_GROQ_PROVIDER.md")
 
+    from ultron.agent.ensemble import ensemble_status
+    from ultron.config import load_ensemble_config
+
+    ensemble_config = load_ensemble_config()
+    # Informational only: a misconfigured advisory pass degrades to the normal single-model loop,
+    # so it must never make `doctor` fail.
+    print(f"[{'ok' if ensemble_config.enabled and not ensemble_config.config_error else '--'}]   "
+          f"ensemble: {ensemble_status(ensemble_config)}")
+
     print("Optional features:")
     for label, modules, extra in (
         ("vision: face utilities (OpenCV)", ["cv2"], "vision"),

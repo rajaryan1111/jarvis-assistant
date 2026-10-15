@@ -500,7 +500,13 @@ def test_explain_and_search_preserve_literal_percent_and_double_dot_filenames(tm
     search = ProjectSearchTool(root=repo)
 
     # Encoded-looking traversal strings are treated as literal names and do not escape root
-    for missing_literal in ("..%2F..%2Foutside.py", "%2e%2e%2foutside"):
+    for missing_literal in (
+        "..%2F..%2Foutside.py",
+        "%2e%2e%2foutside",
+        "%2e%2e%5coutside",
+        "..%252f..%252foutside",
+        "%252e%252e%252foutside",
+    ):
         assert explain.run({"path": missing_literal}).data["reason"] == "not_found"
         assert search.run({"query": "OUTSIDE_SECRET", "path": missing_literal}).data["reason"] == "not_found"
 
@@ -519,6 +525,13 @@ def test_explain_and_search_preserve_literal_percent_and_double_dot_filenames(tm
     lit_dir.mkdir()
     (lit_dir / "inside.py").write_text("def inside_fn() -> str:\n    return 'safe_inside'\n", encoding="utf-8")
 
+    # Backslash- and double-encoded-looking names are also literal, never decoded separators.
+    backslash_lit_dir = repo / "%2e%2e%5coutside"
+    backslash_lit_dir.mkdir()
+    (backslash_lit_dir / "inside.py").write_text(
+        "def encoded_backslash_fn() -> str:\n    return 'literal'\n", encoding="utf-8"
+    )
+
     exp_py = explain.run({"path": "foo..bar.py", "symbol": "double_dot_fn"})
     assert exp_py.ok is True
     assert exp_py.data["observed"]["symbol"] == "double_dot_fn"
@@ -534,6 +547,14 @@ def test_explain_and_search_preserve_literal_percent_and_double_dot_filenames(tm
     srch_dir = search.run({"query": "safe_inside", "path": "%2e%2e%2foutside"})
     assert srch_dir.ok is True
     assert [m["path"] for m in srch_dir.data["matches"]] == ["%2e%2e%2foutside/inside.py"]
+
+    exp_backslash = explain.run({"path": "%2e%2e%5coutside/inside.py", "symbol": "encoded_backslash_fn"})
+    assert exp_backslash.ok is True
+    assert exp_backslash.data["path"] == "%2e%2e%5coutside/inside.py"
+
+    srch_backslash = search.run({"query": "literal", "path": "%2e%2e%5coutside"})
+    assert srch_backslash.ok is True
+    assert [m["path"] for m in srch_backslash.data["matches"]] == ["%2e%2e%5coutside/inside.py"]
 
     srch_all = search.run({"query": "needle"})
     assert srch_all.ok is True
@@ -564,6 +585,12 @@ def test_explain_and_search_preserve_literal_percent_and_double_dot_filenames(tm
         (".aws/config", "sensitive"),
         (".kube/config", "sensitive"),
         (".ssh/id_rsa", "sensitive"),
+        # Percent-encoded-looking components are literal filesystem names here, never
+        # URL-decoded: they are looked up inside the root and simply do not exist.
+        ("%2e%2e%2foutside", "not_found"),
+        ("%2e%2e%5coutside", "not_found"),
+        ("..%252f..%252foutside", "not_found"),
+        ("%252e%252e%252foutside", "not_found"),
     ],
 )
 def test_all_three_project_tools_enforce_consistent_target_path_policy(

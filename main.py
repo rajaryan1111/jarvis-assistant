@@ -1,6 +1,7 @@
 import os
 import json
 import html
+import logging
 import datetime
 import subprocess
 import urllib.parse
@@ -20,15 +21,18 @@ from openai import OpenAI
 import vision  # optional vision utilities; degrade gracefully when OpenCV/MediaPipe are missing
 import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
 import news
+from ultron.agent.ensemble import Adviser, EnsembleProvider
 from ultron.agent.provider import create_provider
 from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
 from ultron.config import (
     OPENAI_CLIENT_MAX_RETRIES,
     OPENAI_CLIENT_TIMEOUT,
+    PROVIDER_KEYS,
     get_credential,
     load_agent_config,
     load_chat_model,
     load_dotenv_if_enabled,
+    load_ensemble_config,
 )
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
@@ -1745,11 +1749,46 @@ def agent_available() -> bool:
     return AGENT_CONFIG.enabled and agent_provider() is not None
 
 
+# ===== Optional multi-model advisory pass (off unless ULTRON_ENSEMBLE=1) =====
+# Advisers are built once, through the same factory and credential rules as the agent provider.
+# A missing key drops that adviser; it never disables the agent. See docs/ENSEMBLE_INTEGRATION.md.
+ENSEMBLE_CONFIG = load_ensemble_config()
+
+
+def _build_ensemble_advisers() -> tuple[Adviser, ...]:
+    built: list[Adviser] = []
+    for spec in ENSEMBLE_CONFIG.advisers:
+        provider_name, _, model = spec.partition(":")
+        # Reuse the existing loader so model names, Groq reasoning effort and provider validation
+        # behave exactly as they do for the primary provider.
+        adviser_config = load_agent_config({**os.environ, "ULTRON_PROVIDER": provider_name,
+                                           "ULTRON_AGENT_MODEL": model, "ULTRON_GROQ_MODEL": model})
+        provider = create_provider(adviser_config, openai_client=client, groq_api_key=GROQ_API_KEY)
+        if provider is None:
+            logging.getLogger("ultron.ensemble").warning(
+                "ensemble adviser %s is unusable (%s not configured?); dropping it",
+                spec, PROVIDER_KEYS.get(provider_name, provider_name))
+            continue
+        built.append(Adviser(spec, provider))
+    return tuple(built)
+
+
+ENSEMBLE_ADVISERS = _build_ensemble_advisers() if ENSEMBLE_CONFIG.enabled else ()
+
+
+def ensembled_provider():
+    """The agent's model plus the optional advisory pass, or the plain provider when it is off."""
+    base = agent_provider()
+    if base is None or not ENSEMBLE_CONFIG.enabled or not ENSEMBLE_ADVISERS:
+        return base
+    return EnsembleProvider(base, ENSEMBLE_ADVISERS, ENSEMBLE_CONFIG)
+
+
 def build_agent(provider=None) -> AgentRuntime:
     limits = AgentLimits(max_steps=AGENT_CONFIG.max_steps, max_tool_calls=AGENT_CONFIG.max_tool_calls,
                          model_timeout=AGENT_CONFIG.model_timeout, tool_timeout=AGENT_CONFIG.tool_timeout,
                          max_duration=AGENT_CONFIG.max_duration, max_output_tokens=AGENT_CONFIG.max_output_tokens)
-    return AgentRuntime(TOOLS, provider if provider is not None else agent_provider(), limits=limits,
+    return AgentRuntime(TOOLS, provider if provider is not None else ensembled_provider(), limits=limits,
                         runs=AGENT_RUNS, executor=AGENT_EXECUTOR)
 
 
