@@ -83,12 +83,15 @@ class Message:
 class ProviderError(Exception):
     """The model could not produce a turn. Messages never contain credentials."""
 
-    def __init__(self, kind: ErrorKind, message: str, *, status: int | None = None, code: str | None = None) -> None:
+    def __init__(self, kind: ErrorKind, message: str, *, status: int | None = None, code: str | None = None,
+                 usage: Usage | None = None) -> None:
         super().__init__(message)
         self.kind = kind
         self.message = message
         self.status = status  # HTTP status, when there was one
         self.code = code  # provider error code such as "insufficient_quota" (never a message or body)
+        # Tokens spent before failure, when known; None means unknown, never zero.
+        self.usage = usage
 
 
 class ModelProvider(Protocol):

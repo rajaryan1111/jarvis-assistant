@@ -292,6 +292,35 @@ class AgentConfig:
     max_concurrent_runs: int = 4
 
 
+# ---- optional multi-model advisory pass (see docs/ENSEMBLE_INTEGRATION.md) ----
+ENSEMBLE_ROUTING_MODES = ("off", "auto", "always")
+DEFAULT_ENSEMBLE_MAX_ADVISERS = 2
+ENSEMBLE_HARD_MAX_ADVISERS = 3  # past three independent notes there is nothing left to compare
+
+
+@dataclass(frozen=True)
+class EnsembleConfig:
+    """Switches and hard limits for the optional advisory pass. Off unless explicitly enabled.
+
+    Advisers are named one by one as ``provider:model``; nothing is discovered automatically and
+    no adviser is inferred from the primary provider. Every value is clamped on load.
+    """
+
+    enabled: bool = False
+    routing: str = "auto"  # off | auto | always
+    synthesis: bool = True  # one comparison call, only when two or more advisers answered
+    advisers: tuple[str, ...] = ()
+    config_error: str = ""  # set when enabled but no adviser is usable
+    max_advisers: int = DEFAULT_ENSEMBLE_MAX_ADVISERS
+    adviser_timeout: float = 10.0
+    total_seconds: float = 15.0
+    advisory_share: float = 0.5  # share of the runtime's per-turn model timeout
+    max_concurrent: int = 4
+    max_output_tokens: int = 400
+    max_advisory_chars: int = 2000
+
+
+
 def load_agent_config(env: Mapping[str, str] | None = None) -> AgentConfig:
     """Read ``ULTRON_AGENT*``. Bad values fall back to the default (never to "unlimited")."""
     import logging
@@ -401,3 +430,82 @@ def agent_provider_status(config: AgentConfig, env: Mapping[str, str] | None = N
     if config.local_only:
         line += " [local-only]"
     return True, line
+
+
+def load_ensemble_config(env: Mapping[str, str] | None = None) -> EnsembleConfig:
+    """Read ``ULTRON_ENSEMBLE*``. Bad values fall back to the default, never to "unlimited"."""
+    import logging
+
+    env = os.environ if env is None else env
+    log = logging.getLogger("ultron.config")
+    defaults = EnsembleConfig()
+
+    def number(name: str, default: float, low: float, high: float, cast: type = float) -> float:
+        raw = (env.get(name) or "").strip()
+        if not raw:
+            return default
+        try:
+            value = cast(raw)
+        except ValueError:
+            log.warning("%s must be a number; using %s", name, default)
+            return default
+        return cast(min(max(value, low), high))
+
+    enabled = _flag(env, "ULTRON_ENSEMBLE", default=False)
+    routing = (env.get("ULTRON_ENSEMBLE_ROUTING") or "").strip().lower() or "auto"
+    if routing not in ENSEMBLE_ROUTING_MODES:
+        log.warning("ULTRON_ENSEMBLE_ROUTING must be one of %s; using auto", ", ".join(ENSEMBLE_ROUTING_MODES))
+        routing = "auto"
+
+    advisers: list[str] = []
+    unusable = 0
+    for chunk in (env.get("ULTRON_ENSEMBLE_ADVISERS") or "").split(","):
+        spec = chunk.strip()
+        if not spec:
+            continue
+        provider, separator, model = spec.partition(":")
+        provider = provider.strip().lower()
+        model = model.strip()
+        if (not separator or provider not in SUPPORTED_PROVIDERS or not model or len(model) > 128
+                or set(model) - _AGENT_MODEL_CHARS):
+            unusable += 1
+            continue
+        canonical = f"{provider}:{model}"
+        if canonical in advisers:
+            log.warning("ULTRON_ENSEMBLE_ADVISERS lists %s twice; keeping one", canonical)
+            continue
+        advisers.append(canonical)
+    if unusable:
+        log.warning("ULTRON_ENSEMBLE_ADVISERS: ignoring %d entry/entries that are not provider:model", unusable)
+
+    # Local-only is a policy boundary: do not construct remote advisers in this mode.
+    if _flag(env, "ULTRON_LOCAL_ONLY", default=False):
+        remote = [spec for spec in advisers if not spec.startswith("ollama:")]
+        if remote:
+            log.warning("ULTRON_LOCAL_ONLY=1: refusing %d non-local ensemble adviser(s)", len(remote))
+        advisers = [spec for spec in advisers if spec.startswith("ollama:")]
+
+    max_advisers = int(number("ULTRON_ENSEMBLE_MAX_ADVISERS", defaults.max_advisers, 1,
+                              ENSEMBLE_HARD_MAX_ADVISERS, int))
+    advisers = advisers[:max_advisers]
+    config_error = ""
+    if enabled and not advisers:
+        config_error = ("ULTRON_ENSEMBLE=1 but ULTRON_ENSEMBLE_ADVISERS names no usable provider:model entry; "
+                        "the agent loop runs single-model")
+        log.warning("%s", config_error)
+
+    return EnsembleConfig(
+        enabled=enabled,
+        routing=routing,
+        synthesis=_flag(env, "ULTRON_ENSEMBLE_SYNTHESIS", default=True),
+        advisers=tuple(advisers),
+        config_error=config_error,
+        max_advisers=max_advisers,
+        adviser_timeout=number("ULTRON_ENSEMBLE_ADVISER_TIMEOUT", defaults.adviser_timeout, 2, 60),
+        total_seconds=number("ULTRON_ENSEMBLE_MAX_SECONDS", defaults.total_seconds, 2, 120),
+        advisory_share=number("ULTRON_ENSEMBLE_ADVISORY_SHARE", defaults.advisory_share, 0.1, 0.9),
+        max_concurrent=int(number("ULTRON_ENSEMBLE_MAX_CONCURRENT", defaults.max_concurrent, 1, 8, int)),
+        max_output_tokens=int(number("ULTRON_ENSEMBLE_MAX_OUTPUT_TOKENS", defaults.max_output_tokens, 64, 2048, int)),
+        max_advisory_chars=int(number("ULTRON_ENSEMBLE_MAX_ADVISORY_CHARS", defaults.max_advisory_chars,
+                                      200, 8000, int)),
+    )
