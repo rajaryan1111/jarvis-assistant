@@ -196,6 +196,39 @@ def test_chat_fallback_is_untouched_when_history_is_off(legacy, monkeypatch, tmp
     assert not (tmp_path / history.HISTORY_FILENAME).exists()
 
 
+def test_chat_provider_failure_keeps_history_valid_and_subsequent_turn_works(legacy, monkeypatch, tmp_path):
+    """A provider exception inside ask_gpt degrades to the friendly apology, leaves the
+    JSONL transcript valid with any credential-shaped text redacted, and the next turn
+    still runs cleanly with the earlier context intact."""
+    monkeypatch.setenv("ULTRON_HISTORY", "1")
+    monkeypatch.setenv("ULTRON_DATA_DIR", str(tmp_path))
+    fake_secret = "sk-" + "histErr0" * 6
+
+    class BoomClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kw):
+                    raise RuntimeError(f"upstream timeout while carrying {fake_secret}")
+
+    monkeypatch.setattr(legacy, "OPENAI_API_KEY", fake_secret)
+    monkeypatch.setattr(legacy, "client", BoomClient())
+    monkeypatch.setattr(legacy, "agent_provider", lambda: None)
+
+    apology = legacy.handle_command(f"explain my key {fake_secret}", HUD())
+    assert apology == "Sorry, I am having trouble thinking right now."
+    raw = (tmp_path / history.HISTORY_FILENAME).read_text(encoding="utf-8")
+    assert fake_secret not in raw
+    parsed = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    assert len(parsed) == 2 and parsed[1]["text"] == apology
+
+    seen = []
+    monkeypatch.setattr(legacy, "ask_gpt", lambda prompt, chat_history: seen.append(list(chat_history))
+                        or "recovered")
+    assert legacy.handle_command("and now a second question", HUD()) == "recovered"
+    assert len(seen[0]) == 2 and seen[0][1]["content"] == apology
+
+
 # ============================================================ 4. CLI verbs
 def test_cli_history_show_export_import_clear(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("ULTRON_HISTORY", "1")

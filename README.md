@@ -185,7 +185,9 @@ The assistant can control this computer, so the server is built to fail closed:
 
 - **Loopback only.** It binds to `127.0.0.1`. Other addresses are refused unless you set
   `ULTRON_ALLOW_NON_LOOPBACK=1` (not recommended: traffic is plain HTTP). Debug mode is off by default and is
-  never allowed on a non-loopback address.
+  never allowed on a non-loopback address. `Host` and `Origin` headers are checked against the loopback
+  allowlist (`ULTRON_ALLOWED_HOSTS` and `ULTRON_ALLOWED_ORIGINS` add comma-separated entries when behind a
+  local proxy).
 - **Authentication on every sensitive endpoint.** `/status`, `/ask`, `/speak`, `/confirm`, `/cancel`,
   `/pending` and `/logout` require either `Authorization: Bearer <token>` (wake-word and other clients) or the
   HUD session cookie. If no token is configured, these endpoints return `503`, and the login page explains the

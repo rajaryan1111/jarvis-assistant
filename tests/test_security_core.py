@@ -70,6 +70,17 @@ def test_allowed_hosts_and_origins_are_loopback_only(tmp_path):
     assert all(o.startswith("http://") for o in s.allowed_origins)
 
 
+def test_extra_allowed_hosts_and_origins_from_env(tmp_path):
+    s = load_settings({
+        "ULTRON_DATA_DIR": str(tmp_path),
+        "ULTRON_ALLOWED_HOSTS": "Jarvis.Local:5001, , proxy.internal:8443",
+        "ULTRON_ALLOWED_ORIGINS": "https://Jarvis.Local:8443/, http://proxy.internal:8443",
+    })
+    assert {"jarvis.local:5001", "proxy.internal:8443"} <= s.allowed_hosts
+    assert {"127.0.0.1:5001", "localhost:5001", "[::1]:5001"} <= s.allowed_hosts
+    assert {"https://jarvis.local:8443", "http://proxy.internal:8443"} <= s.allowed_origins
+
+
 @pytest.mark.parametrize("host,expected", [("127.0.0.1", True), ("localhost", True), ("::1", True),
                                            ("0.0.0.0", False), ("192.168.1.5", False), ("example.com", False)])
 def test_is_loopback_host(host, expected):
