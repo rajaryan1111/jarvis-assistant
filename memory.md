@@ -1,6 +1,6 @@
 # Jarvis / ULTRON — Project Memory and Handoff
 
-**Last updated:** 2026-10-13 (v5 project-copilot requirements)  
+**Last updated:** 2026-10-16 (post-integration handoff; main verified at `88dabc6cd41a6f71082db9b48aaa2a48e3cfc6a2`)  
 **Purpose:** Concise handoff log; source code and Git history remain authoritative.
 
 ## 1. Approved product direction
@@ -18,12 +18,14 @@
 
 - Repository: https://github.com/rajaryan1111/jarvis-assistant
 - Default branch: `main`.
-- PR #3: https://github.com/rajaryan1111/jarvis-assistant/pull/3 — last verified open/draft M2.2.1 Groq reliability work; do not merge without review/authorization.
-- Last-known head for `m2.2.1-groq-fixes`: `e7789d8a5f78ed12e49a26d233fc260173b20c64`.
-- Preserve all branches and PRs. Remote actions require explicit authorization; report actual GitHub results.
-- Documentation branch `docs/project-foundation-v1` was created from `main` and contains the original six documents, commit `d43552128372338865e1a032cd64e6ea6b6697a4`.
-- Current active branch: `arena/f489501f-jarvis-assistant` (integrating `origin/main` `e7b9ae5286b50bc4c6c292c26ecc8ed928081645`, `origin/m2.2.1-groq-fixes` `e7789d8a5f78ed12e49a26d233fc260173b20c64`, `origin/research/github-account-audit-2026-10-13` `4e4b1e3225417276505557b26e5dee24ef0bc4cb`, and `origin/research/ruflo-review-2026-10-13` `c8cbeae7999075dd56bd36d731305b2ad21b597d`).
-- The revised v2 document set is on `docs/ultron-collaborative-assistant-v2`. The v3 trilingual desktop requirements are on `docs/ultron-trilingual-desktop-v3`. The expanded student-life vision is on `docs/student-life-companion-v4`.
+- Current verified `main` head (2026-10-16): `88dabc6cd41a6f71082db9b48aaa2a48e3cfc6a2`.
+- PR #4 (ensemble integration), #5 (security/agent foundation), and #6 (local provider, racing, AutoTune, Smart Router) are merged. PR #2 and #3 are closed/merged as their commits are represented in `main`.
+- Latest `main` CI run: https://github.com/rajaryan1111/jarvis-assistant/actions/runs/38826067567 — 4/4 Python 3.10–3.13 jobs passed on the exact `main` head. The PR #4 integration head also passed 4/4: https://github.com/rajaryan1111/jarvis-assistant/actions/runs/38825978177.
+- Before this handoff PR was opened, no open PRs were found during the 2026-10-16 recheck. This is point-in-time state and should be reverified before future merges.
+- Live OpenAI/Groq/Ollama provider behavior and target-Mac voice/hardware behavior have not been verified by these CI runs.
+- No `LICENSE` file has been added. The G0DM0D3 reference is AGPL-3.0; do not copy its source/prompts/scoring tables wholesale or imply the licensing question is resolved. Keep new implementation original and flag distribution/licensing for owner decision.
+- Preserve existing branches and PRs; remote actions require explicit authorization. Report actual GitHub results.
+- Documentation branches (`docs/project-foundation-v1`, `docs/ultron-collaborative-assistant-v2`, `docs/ultron-trilingual-desktop-v3`, `docs/student-life-companion-v4`) are historical context; check current GitHub state before relying on them.
 
 ## 3. Architecture summary
 
@@ -79,12 +81,7 @@ Deterministic tests/stubs do not prove live provider behavior. macOS voice, micr
 
 ## 8. Next steps
 
-1. Verify the six revised docs on `docs/ultron-collaborative-assistant-v2`.
-2. Review the product direction and scope before merging any documentation.
-3. Trace and measure the existing voice path on macOS.
-4. Build task/project workspace in small increments after runtime reliability.
-5. Add source/citation handling, repository-aware coding, and website workflows with tests.
-6. Keep current features distinct from proposed future behavior.
+The original documentation-review items below are historical. Current post-integration priorities are recorded in the 2026-10-16 status section at the end of this file. Do not treat a prior branch or PR status in older sections as current without rechecking GitHub.
 
 ## 9. New approved requirements — 2026-10-13
 
@@ -212,3 +209,33 @@ Highest-value reusable patterns:
 - Candidate future research sources: arXiv Atom, OpenAlex, selected RSS feeds, Hacker News Algolia, Hugging Face metadata, and OpenRouter model metadata. These are not integrated or approved as production dependencies. Remote OK is only relevant if a career-search workflow is explicitly in scope.
 
 No code, dependency, dataset, personal media, or private repository content was copied. No tests were run across all repositories; this was a targeted reuse audit, not a line-by-line security audit. No PR was opened, no merge/deployment occurred, and main/existing PRs were left unchanged.
+
+
+## 22. Post-integration status and next safe milestone — 2026-10-16
+
+### Verified integration state
+
+- `main` is at `88dabc6cd41a6f71082db9b48aaa2a48e3cfc6a2` after merging PRs #5, #6, and #4 in that order.
+- Latest main CI passed all four supported Python versions (3.10–3.13). This is CI evidence only, not live provider or macOS hardware validation.
+- Before PR #7 was opened, no open PRs were found in the latest recheck.
+- The merged tree now includes the provider-neutral bounded agent loop, central policy/registry, Groq and Ollama adapters, local-only provider guard, bounded model racing, AutoTune, opt-in Smart Router, and opt-in advisory ensemble. Feature descriptions in older sections may predate this integration; use source and current tests as authority.
+
+### Next milestone recommendation: Phase 7.1 — safe local knowledge and memory continuity
+
+Start with a fresh source/test audit, not a speculative rewrite. Existing `knowledge.py` already has offline embeddings, chunk provenance, malformed-index handling, and source-context fallback. Preserve those behaviors. The first work item should be a focused review of resource limits, path confinement, index validation, retrieval determinism, and prompt-injection containment, followed by regression tests for confirmed defects only.
+
+Acceptance criteria:
+- Knowledge indexing stays confined to the configured knowledge directory and does not follow symlinks outside it.
+- Explicit limits bound file count, file bytes, extracted text, chunk count, embedding batches, index size, and retrieval context.
+- Index entries are validated for shape, embedding dimensions, finite numeric values, and reasonable lengths before ranking.
+- Source labels are useful and stable without leaking unrelated absolute local paths.
+- Retrieved document content is treated only as untrusted evidence; it cannot authorize or trigger tools.
+- Existing offline fallback, chunk provenance, and malformed-index behavior remain covered by tests.
+- Run focused tests, full suite, lint, compile, and secret scan on the final tree before proposing a merge. Live provider and macOS checks must be reported separately.
+
+### Explicitly unresolved
+
+- No live Groq/OpenAI/Ollama validation was run during the integration; perform provider-specific tests on the owner's machine when credentials/services are available.
+- macOS microphone, wake word, TTS, camera, and app lifecycle need target-Mac smoke testing.
+- Choose and document the repository license only after reviewing the G0DM0D3 AGPL-3.0 reference and intended distribution. Do not add a license by assumption.
+- Do not claim that Arena/local filesystem work was performed by this GitHub-only integration process.
