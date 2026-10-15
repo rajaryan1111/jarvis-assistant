@@ -298,6 +298,12 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     from ultron.agent import router as smart_router
     print(f"[{'ok' if smart_router.router_enabled(os.environ) else '--'}]   "
           f"smart router: {smart_router.config_summary(os.environ)}")
+    from ultron.agent.ensemble import ensemble_status
+    from ultron.config import load_ensemble_config
+
+    ensemble_config = load_ensemble_config()
+    print(f"[{'ok' if ensemble_config.enabled and not ensemble_config.config_error else '--'}]   "
+          f"ensemble: {ensemble_status(ensemble_config)}")
 
     print("Optional features:")
     for label, modules, extra in (

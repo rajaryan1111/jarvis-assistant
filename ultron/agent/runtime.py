@@ -418,6 +418,9 @@ class AgentRuntime:
                     max_output_tokens=self.limits.max_output_tokens,
                 )
             except ProviderError as err:
+                if err.usage is not None:
+                    run.input_tokens += err.usage.input_tokens
+                    run.output_tokens += err.usage.output_tokens
                 log.info("agent %s model_call n=%d status=error kind=%s ms=%d", run.handle.run_id, run.model_calls,
                          err.kind, _ms(self._clock() - began))
                 if err.kind in ("malformed_call", "malformed_output"):
