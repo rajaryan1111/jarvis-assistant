@@ -22,7 +22,7 @@ from flask.testing import FlaskClient
 from ultron.agent import catalog as agent_catalog
 from ultron.agent.catalog import build_catalog, model_name
 from ultron.agent.provider import Message, ModelTurn, OpenAIChatProvider, ProviderError, ToolCall
-from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
+from ultron.agent.runtime import STOP_REASONS, AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
 from ultron.agent.schema import SchemaDefinitionError, check_schema, validate
 from ultron.api.app import create_app
 from ultron.config import AgentConfig, load_agent_config, load_settings
@@ -854,8 +854,16 @@ def test_openai_adapter_maps_errors_without_leaking_details(name, kind, caplog):
     assert err.value.kind == kind and "sk-" not in err.value.message and "sk-" not in caplog.text
 
 
-@pytest.mark.parametrize("response", [SimpleNamespace(choices=[]), None, _response(
-    tool_calls=[SimpleNamespace(id=None, function=SimpleNamespace(name=None, arguments="{}"))])])
+@pytest.mark.parametrize("response", [
+    SimpleNamespace(choices=[]),
+    None,
+    _response(tool_calls=[SimpleNamespace(id=None, function=SimpleNamespace(name=None, arguments="{}"))]),
+    _response(tool_calls=[SimpleNamespace(id="call_1", function=SimpleNamespace(name="   ", arguments="{}"))]),
+    _response(tool_calls=[
+        SimpleNamespace(id="call_1", function=SimpleNamespace(name="time__now", arguments={"a": 1})),
+    ]),
+    _response(tool_calls=[SimpleNamespace(id="call_1", function=SimpleNamespace(name="time__now", arguments=123))]),
+])
 def test_openai_adapter_rejects_malformed_responses(response):
     provider = OpenAIChatProvider(_FakeClient(_FakeCompletions(response)), "m")
     with pytest.raises(ProviderError) as err:
@@ -922,3 +930,153 @@ def test_agent_context_cannot_confirm_even_from_the_hud(legacy):
     legacy.TOOLS.request("system.shutdown", {}, HUD())
     code = legacy.TOOLS.confirmations.pending_for(HUD().principal).code
     assert legacy.TOOLS.confirm(ctx, code=code).status == "denied"
+
+
+# ============================================================ 16. M2.3 hardening regressions
+def test_tool_free_finish_citing_nonexistent_evidence_is_downgraded(legacy):
+    model = ScriptedModel(finish("achieved", "Done!", evidence="c1"))
+    report = runtime(legacy, model).run("do something", HUD())
+    assert report.status == "incomplete" and report.verified is False
+    assert "the cited result c1 does not exist" in report.problems
+
+
+def test_unrecovered_failed_read_only_tool_prevents_false_verified_completion(legacy):
+    add_tool(legacy, "demo.broken_read", RiskTier.OBSERVE, lambda _a: ToolResult(False, "service down"))
+    model = ScriptedModel(
+        call("demo.broken_read"),
+        ModelTurn(text="Everything is fine, the service returned healthy data."),
+    )
+    report = runtime(legacy, model, allowlist=("demo.broken_read",)).run("check service", HUD())
+    assert report.status == "incomplete" and report.verified is False
+    assert any("demo.broken_read did not succeed" in p for p in report.problems)
+    assert "no tool call succeeded" in report.problems
+
+
+def test_invalid_finish_without_any_completed_tool_never_reports_verified_completion(legacy):
+    model = ScriptedModel(
+        raw_call("finish", '{"outcome": "unknown_value", "summary": "bad"}'),
+        finish("achieved", "All done!"),
+    )
+    report = runtime(legacy, model).run("do it", HUD())
+    assert report.status == "incomplete" and report.verified is False
+    assert "no tool call succeeded" in report.problems
+
+
+def test_legitimate_separate_routine_actions_with_distinct_arguments_succeed(legacy):
+    model = ScriptedModel(
+        call("memory.add_note", fact="buy milk"),
+        call("memory.add_note", fact="call mom"),
+        finish("achieved", "Saved both notes.", evidence="c1,c2"),
+    )
+    report = runtime(legacy, model).run("remember to buy milk and remember to call mom", HUD())
+    assert report.status == "completed" and report.verified is True
+    assert legacy.memory["notes"] == ["buy milk", "call mom"]
+
+
+def test_whitespace_equivalent_duplicate_call_is_blocked(legacy):
+    model = ScriptedModel(
+        call("memory.add_note", fact="buy milk"),
+        call("memory.add_note", fact="  buy   milk  "),
+        finish("achieved", "Saved note.", evidence="c1"),
+    )
+    report = runtime(legacy, model).run("remember to buy milk", HUD())
+    assert report.status == "completed" and report.verified is True
+    assert [(s.tool, s.status) for s in report.steps] == [
+        ("memory.add_note", "completed"), ("memory.add_note", "duplicate"),
+    ]
+    assert legacy.memory["notes"] == ["buy milk"]
+
+
+def test_cancellation_between_multiple_tool_calls_in_one_turn_preserves_completed_evidence(legacy):
+    runs = RunRegistry()
+
+    def first_note(_args):
+        runs.cancel(HUD().principal)
+        return ToolResult(True, "first note saved")
+
+    second_ran = []
+    add_tool(legacy, "demo.first", RiskTier.ROUTINE, first_note)
+    add_tool(legacy, "demo.second", RiskTier.ROUTINE, lambda a: second_ran.append(a) or ToolResult(True, "second"))
+    turn = ModelTurn(tool_calls=(
+        ToolCall("tc_a", model_name("demo.first"), "{}"),
+        ToolCall("tc_b", model_name("demo.second"), "{}"),
+    ))
+    rt = AgentRuntime(legacy.TOOLS, ScriptedModel(turn), runs=runs, executor=ToolExecutor(),
+                      allowlist=("demo.first", "demo.second"))
+    report = rt.run("run both", HUD())
+    assert report.status == "cancelled" and report.stop_reason == "cancelled"
+    assert [(s.tool, s.status) for s in report.steps] == [("demo.first", "completed")]
+    assert second_ran == []
+    assert "Done so far: demo.first: first note saved." in report.reply
+
+
+def test_deadline_between_multiple_tool_calls_in_one_turn_stops_before_second_call(legacy):
+    now = [100.0]
+
+    def first_step(_args):
+        now[0] += 50.0  # crosses max_duration=10.0 right after first tool completes
+        return ToolResult(True, "step one done")
+
+    second_ran = []
+    add_tool(legacy, "demo.step1", RiskTier.ROUTINE, first_step)
+    add_tool(legacy, "demo.step2", RiskTier.ROUTINE, lambda a: second_ran.append(a) or ToolResult(True, "step two"))
+    turn = ModelTurn(tool_calls=(
+        ToolCall("tc_1", model_name("demo.step1"), "{}"),
+        ToolCall("tc_2", model_name("demo.step2"), "{}"),
+    ))
+    rt = AgentRuntime(legacy.TOOLS, ScriptedModel(turn), limits=AgentLimits(max_duration=10.0),
+                      runs=RunRegistry(), executor=ToolExecutor(), allowlist=("demo.step1", "demo.step2"),
+                      clock=lambda: now[0])
+    report = rt.run("do two steps", HUD())
+    assert report.status == "limit_reached" and report.stop_reason == "time_limit"
+    assert [(s.tool, s.status) for s in report.steps] == [("demo.step1", "completed")]
+    assert second_ran == []
+    assert "Done so far: demo.step1: step one done." in report.reply
+
+
+def test_early_exit_reports_have_valid_stop_reasons_and_public_fields(legacy):
+    empty = runtime(legacy, ScriptedModel()).run("   ", HUD())
+    assert empty.status == "needs_input" and empty.stop_reason == "empty_objective"
+    assert empty.stop_reason in STOP_REASONS and empty.public()["stop_reason"] == "empty_objective"
+
+    too_long = runtime(legacy, ScriptedModel(), max_objective_chars=5).run("123456", HUD())
+    assert too_long.status == "failed" and too_long.stop_reason == "objective_too_long"
+    assert too_long.stop_reason in STOP_REASONS
+
+    unconfigured = runtime(legacy, None).run("hello", HUD())
+    assert unconfigured.status == "failed" and unconfigured.stop_reason == "not_configured"
+    assert unconfigured.error == "not_configured" and unconfigured.public()["error"] == "not_configured"
+
+    busy_runs = RunRegistry(max_concurrent=0)
+    busy = AgentRuntime(legacy.TOOLS, ScriptedModel(), runs=busy_runs).run("hello", HUD())
+    assert busy.status == "failed" and busy.stop_reason == "busy"
+
+
+def test_secrets_in_tool_results_are_redacted_before_storage_and_provider_messages(legacy, monkeypatch):
+    fake_weather_secret = "wthr_secret_9876543210abcdef"  # secret-scan: allow
+    fake_client_secret = "clnt_secret_1234567890abcdef"  # secret-scan: allow
+    fake_openai_token = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"  # secret-scan: allow
+    monkeypatch.setenv("WEATHER_API_KEY", fake_weather_secret)
+    monkeypatch.setenv("ULTRON_CLIENT_TOKEN", fake_client_secret)
+
+    def leaky_tool(_args):
+        return ToolResult(
+            True,
+            f"Fetched https://example.test?api_key={fake_weather_secret} with {fake_openai_token}",
+            {"header": f"Authorization: Bearer {fake_client_secret}", "raw": fake_weather_secret},
+        )
+
+    add_tool(legacy, "demo.leaky", RiskTier.OBSERVE, leaky_tool)
+    model = ScriptedModel(
+        call("demo.leaky"),
+        finish("achieved", f"Summary with {fake_weather_secret} and {fake_client_secret}", evidence="c1"),
+    )
+    report = runtime(legacy, model, allowlist=("demo.leaky",)).run("run leaky", HUD())
+    assert report.status == "completed"
+    sent_to_provider = "\n".join(m.content for m in model.requests[-1][0])
+    for secret in (fake_weather_secret, fake_client_secret, fake_openai_token):
+        assert secret not in sent_to_provider
+        assert secret not in report.steps[0].message
+        assert secret not in report.reply
+        assert secret not in json.dumps(report.public())
+

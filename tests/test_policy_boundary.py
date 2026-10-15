@@ -68,6 +68,9 @@ EXPECTED_TOOLS: dict[str, tuple[RiskTier, bool]] = {
     "wiki.summary": (R.OBSERVE, False),
     "weather.current": (R.OBSERVE, False),
     "news.headlines": (R.OBSERVE, False),
+    "project.inspect": (R.OBSERVE, False),
+    "project.explain": (R.OBSERVE, False),
+    "project.search": (R.OBSERVE, False),
 }
 
 

@@ -1,5 +1,6 @@
 import os
 import json
+import html
 import datetime
 import subprocess
 import urllib.parse
@@ -19,7 +20,7 @@ from openai import OpenAI
 import vision  # optional vision utilities; degrade gracefully when OpenCV/MediaPipe are missing
 import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
 import news
-from ultron.agent.provider import OpenAIChatProvider
+from ultron.agent.provider import create_provider
 from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
 from ultron.config import (
     OPENAI_CLIENT_MAX_RETRIES,
@@ -42,6 +43,7 @@ from ultron.tools.macos import (
     SpeakTool,
     VolumeTool,
 )
+from ultron.tools.project import ProjectExplainTool, ProjectInspectTool, ProjectSearchTool
 from ultron.tools.registry import ToolOutcome, ToolRegistry
 from ultron.tools.system import ClearUserCachesTool, PowerTool
 
@@ -54,6 +56,7 @@ WEATHER_API_KEY = get_credential("WEATHER_API_KEY")
 NEWS_COUNTRY = os.getenv("NEWS_COUNTRY", "in")
 DEFAULT_WEATHER_CITY = os.getenv("WEATHER_CITY", "Delhi")
 CRICKET_API_KEY = get_credential("CRICKET_API_KEY")  # live cricket API key
+GROQ_API_KEY = get_credential("GROQ_API_KEY")  # only used by the agent loop with ULTRON_PROVIDER=groq
 
 CHAT_MODEL = load_chat_model()  # ULTRON_CHAT_MODEL; the agent uses AGENT_CONFIG.model
 client = (OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_CLIENT_TIMEOUT, max_retries=OPENAI_CLIENT_MAX_RETRIES)
@@ -303,6 +306,9 @@ def play_youtube(query: str, ctx: CommandContext = None) -> str:
     search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
     try:
         res = requests.get(search_url, timeout=5)
+        raise_for_status = getattr(res, "raise_for_status", None)
+        if callable(raise_for_status):
+            raise_for_status()
         video_ids = re.findall(r"watch\?v=([\w-]{11})", res.text)
         url = "https://www.youtube.com/watch?v=" + video_ids[0] if video_ids else search_url
         reply = f"Playing {query} on YouTube."
@@ -319,15 +325,30 @@ def _weather_report(city: str) -> ToolResult:
     if not WEATHER_API_KEY:
         return ToolResult(False, "Weather API key is not configured.")
     try:
-        data = requests.get(
+        response = requests.get(
             "https://api.openweathermap.org/data/2.5/weather",
             params={"q": city, "appid": WEATHER_API_KEY, "units": "metric"},
             timeout=5,
-        ).json()
-        if data.get("cod") != 200:
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or data.get("cod") != 200:
             return ToolResult(False, f"Weather error for {city}.")
-        temp = int(data["main"]["temp"])
-        desc = data["weather"][0]["description"]
+        main_data = data.get("main")
+        conditions = data.get("weather")
+        if not isinstance(main_data, dict) or not isinstance(conditions, list) or not conditions:
+            return ToolResult(False, f"Weather data for {city} was incomplete.")
+        raw_temp = main_data.get("temp")
+        desc = conditions[0].get("description") if isinstance(conditions[0], dict) else None
+        if (
+            isinstance(raw_temp, bool)
+            or not isinstance(raw_temp, (int, float))
+            or not isinstance(desc, str)
+            or not desc.strip()
+        ):
+            return ToolResult(False, f"Weather data for {city} was incomplete.")
+        temp = int(raw_temp)
+        desc = desc.strip()
         return ToolResult(True, f"The weather in {city} is {desc}, {temp}°C.",
                           {"city": city, "temperature_c": temp, "description": desc})
     except Exception as e:
@@ -354,6 +375,44 @@ def get_news() -> str:
     )
 
 
+def _wiki_summary_report(topic: str, *, not_found_message: str | None = None) -> ToolResult:
+    """Two-sentence Wikipedia summary with explicit disambiguation, missing-page, empty, and network handling."""
+    clean_topic = str(topic or "").strip()
+    if not clean_topic:
+        return ToolResult(False, "Please tell me what to look up.", {"topic": "", "status": "empty_query"})
+    try:
+        raw = wikipedia.summary(clean_topic, sentences=2)
+    except wikipedia.exceptions.DisambiguationError as e:
+        raw_options = getattr(e, "options", None) or []
+        options = [str(opt).strip() for opt in raw_options if isinstance(opt, str) and str(opt).strip()][:5]
+        hint = f" Options include: {', '.join(options)}." if options else ""
+        return ToolResult(
+            False,
+            f"'{clean_topic}' is ambiguous on Wikipedia.{hint}",
+            {"topic": clean_topic, "status": "ambiguous", "options": options, "source": "wikipedia"},
+        )
+    except wikipedia.exceptions.PageError:
+        msg = not_found_message or f"I could not find a Wikipedia page for {clean_topic}."
+        return ToolResult(False, msg, {"topic": clean_topic, "status": "not_found", "source": "wikipedia"})
+    except (requests.RequestException, wikipedia.exceptions.HTTPTimeoutError) as e:
+        print("Wiki error:", type(e).__name__)
+        return ToolResult(
+            False,
+            "Wikipedia is unavailable right now.",
+            {"topic": clean_topic, "status": "unavailable", "source": "wikipedia"},
+        )
+    except Exception as e:
+        print("Wiki error:", type(e).__name__)
+        msg = not_found_message or f"I could not find information on {clean_topic}."
+        return ToolResult(False, msg, {"topic": clean_topic, "status": "error", "source": "wikipedia"})
+
+    summary = str(raw or "").strip()
+    if not summary:
+        msg = not_found_message or f"I could not find information on {clean_topic}."
+        return ToolResult(False, msg, {"topic": clean_topic, "status": "empty", "source": "wikipedia"})
+    return ToolResult(True, summary, {"topic": clean_topic, "status": "verified", "source": "wikipedia"})
+
+
 def wiki(cmd: str) -> str:
     topic = (
         cmd.replace("who is", "")
@@ -363,24 +422,81 @@ def wiki(cmd: str) -> str:
     )
     if not topic:
         return "Please tell me what to search for."
-    try:
-        return wikipedia.summary(topic, sentences=2)
-    except Exception as e:
-        print("Wiki error:", e)
-        return "I could not find information on that."
+    return _wiki_summary_report(topic, not_found_message="I could not find information on that.").message
 
 
 # ================== WEB SEARCH (DUCKDUCKGO) ==================
-def _ddg_result_titles(query: str) -> list:
-    """Top result titles from DuckDuckGo's HTML page (read-only; [] on any error)."""
+def _normalize_search_url(raw_href: str | None) -> str | None:
+    """Extract and validate an HTTP(S) result URL from a DuckDuckGo anchor href."""
+    if not raw_href or not isinstance(raw_href, str):
+        return None
+    candidate = html.unescape(raw_href).strip()
+    if not candidate:
+        return None
+    if candidate.startswith("//"):
+        candidate = "https:" + candidate
+    parts = urllib.parse.urlsplit(candidate)
+    if (
+        (parts.netloc.lower().endswith("duckduckgo.com") or not parts.scheme)
+        and parts.path.startswith("/l/")
+    ):
+        uddg = urllib.parse.parse_qs(parts.query).get("uddg")
+        if uddg and uddg[0]:
+            candidate = uddg[0].strip()
+            parts = urllib.parse.urlsplit(candidate)
+    scheme = parts.scheme.lower()
+    netloc = parts.netloc.strip().lower()
+    if scheme not in ("http", "https") or not netloc or ("." not in netloc and netloc != "localhost"):
+        return None
+    if any(ch.isspace() for ch in candidate):
+        return None
+    return urllib.parse.urlunsplit((scheme, netloc, parts.path, parts.query, ""))
+
+
+def _ddg_fetch_results(query: str) -> list[dict]:
+    """Top search results (title and verified HTTP(S) URL when available) from DuckDuckGo HTML."""
     url_html = "https://duckduckgo.com/html/?q=" + urllib.parse.quote(query)
     try:
         res = requests.get(url_html, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
-        matches = re.findall(r'class="result__a".*?>(.*?)</a>', res.text)  # result__a anchors
+        raise_for_status = getattr(res, "raise_for_status", None)
+        if callable(raise_for_status):
+            raise_for_status()
+        anchors = re.findall(
+            r'<a\b([^>]*\bclass=["\'][^"\']*\bresult__a\b[^"\']*["\'][^>]*)>(.*?)</a>',
+            res.text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
     except Exception as e:
         print("Web search error:", type(e).__name__)
         return []
-    return [re.sub("<.*?>", "", m).strip() for m in matches if re.sub("<.*?>", "", m).strip()]
+    results = []
+    for attrs, inner_html in anchors:
+        title = html.unescape(re.sub(r"<.*?>", "", inner_html, flags=re.DOTALL)).strip()
+        if not title:
+            continue
+        href_match = re.search(r'\bhref=["\']([^"\']+)["\']', attrs, flags=re.IGNORECASE)
+        url = _normalize_search_url(href_match.group(1) if href_match else None)
+        results.append({"title": title, "url": url, "source": "duckduckgo"})
+    return results
+
+
+def _ddg_result_titles(query: str) -> list:
+    """Top result titles from DuckDuckGo's HTML page (read-only; [] on any error)."""
+    return [item["title"] for item in _ddg_fetch_results(query)]
+
+
+_DEFAULT_DDG_RESULT_TITLES = _ddg_result_titles
+
+
+def _ddg_results(query: str) -> list[dict]:
+    """Structured DuckDuckGo search results; honors monkeypatched ``_ddg_result_titles`` in tests."""
+    if _ddg_result_titles is not _DEFAULT_DDG_RESULT_TITLES:
+        return [
+            {"title": str(title).strip(), "url": None, "source": "duckduckgo"}
+            for title in _ddg_result_titles(query)
+            if str(title).strip()
+        ]
+    return _ddg_fetch_results(query)
 
 
 def web_search_ddg(query: str, ctx: CommandContext = None) -> str:
@@ -418,10 +534,18 @@ def get_live_cricket_score(cmd: str) -> str:
             params={"apikey": CRICKET_API_KEY, "offset": 0},
             timeout=8,
         )
+        resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            return "The cricket API returned an invalid response, sir."
+        if data.get("status") == "failure" or data.get("error"):
+            return "The cricket service could not provide live scores right now, sir."
 
-        # Different APIs might use different keys; try to be defensive.
-        matches = data.get("data") or data.get("matches") or []
+        # Different API versions may use different keys; validate before processing.
+        raw_matches = data.get("data") or data.get("matches") or []
+        if not isinstance(raw_matches, list):
+            return "The cricket API returned invalid match data, sir."
+        matches = [match for match in raw_matches if isinstance(match, dict)]
         if not matches:
             return "I did not find any ongoing match right now, sir."
 
@@ -456,6 +580,8 @@ def get_live_cricket_score(cmd: str) -> str:
 
         parts = []
         for inn in innings_list:
+            if not isinstance(inn, dict):
+                continue
             r = inn.get("r") or inn.get("runs") or "?"
             w = inn.get("w") or inn.get("wickets") or "?"
             o = inn.get("o") or inn.get("overs") or "?"
@@ -1401,21 +1527,26 @@ def _tool_list_notes(_args) -> ToolResult:
 
 def _tool_web_search(args) -> ToolResult:
     query = str(args.get("query", "")).strip()
-    titles = _ddg_result_titles(query)[:5] if query else []
+    results = _ddg_results(query)[:5] if query else []
+    titles = [item["title"] for item in results]
     if not titles:
         return ToolResult(False, f"I found no web results for {query}." if query else "Nothing to search for.")
-    return ToolResult(True, "Top web results: " + " ; ".join(titles), {"query": query, "titles": titles})
+    formatted = [
+        f"{item['title']} ({item['url']})" if item.get("url") else item["title"]
+        for item in results
+    ]
+    return ToolResult(
+        True,
+        "Top web results: " + " ; ".join(formatted),
+        {"query": query, "titles": titles, "results": results, "source": "duckduckgo"},
+    )
 
 
 def _tool_wiki_summary(args) -> ToolResult:
     topic = str(args.get("topic", "")).strip()
     if not topic:
         return ToolResult(False, "Please tell me what to look up.")
-    try:
-        return ToolResult(True, wikipedia.summary(topic, sentences=2), {"topic": topic})
-    except Exception as e:
-        print("Wiki error:", type(e).__name__)
-        return ToolResult(False, f"I could not find information on {topic}.")
+    return _wiki_summary_report(topic)
 
 
 def _tool_weather(args) -> ToolResult:
@@ -1428,7 +1559,10 @@ def _tool_news(_args) -> ToolResult:
     heads = news.get_headlines()[:5]
     if not heads:
         return ToolResult(False, "Sorry, I could not fetch the news right now.")
-    return ToolResult(True, get_news(), {"headlines": heads})
+    message = "Here are top headlines. " + " ".join(
+        f"Headline {index + 1}: {headline}." for index, headline in enumerate(heads)
+    )
+    return ToolResult(True, message, {"headlines": heads})
 
 
 def _tool_add_reminder(args) -> ToolResult:
@@ -1473,7 +1607,8 @@ def _reminder_count_preview(_args) -> str:
 
 
 def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, opener=None,
-                        screenshot_dir=None, temperature_candidates=None, voice_trust=None) -> ToolRegistry:
+                        screenshot_dir=None, temperature_candidates=None, voice_trust=None,
+                        project_root=None) -> ToolRegistry:
     """Every state-changing legacy operation (and every read-only tool the agent loop may use)
     is registered here with its risk tier.
 
@@ -1574,6 +1709,9 @@ def build_tool_registry(platform=None, runner=subprocess.run, cache_dir=None, op
                                   "description": "City name; omit for the default city."})))
     registry.register(_fn_tool("news.headlines", "Get the top news headlines.", R.OBSERVE, _tool_news,
                                side_effects={"network"}, external_content=True, parameters=_NO_ARGS))
+    registry.register(ProjectInspectTool(root=project_root, runner=runner))
+    registry.register(ProjectExplainTool(root=project_root))
+    registry.register(ProjectSearchTool(root=project_root))
     return registry
 
 
@@ -1588,9 +1726,19 @@ AGENT_EXECUTOR = ToolExecutor(max_inflight=AGENT_CONFIG.max_concurrent_runs)
 _AGENT_PREFIX_RE = re.compile(r"^\s*agent\s*[:,]?\s+(?P<objective>\S.*)$", re.IGNORECASE | re.DOTALL)
 
 
+# ULTRON_PROVIDER=groq: one Groq client for the process (explicit Groq base URL, its own key).
+# The single-shot chat helpers (ask_gpt, study planner, knowledge base) keep using `client`.
+_GROQ_PROVIDER = (create_provider(AGENT_CONFIG, groq_api_key=GROQ_API_KEY)
+                  if AGENT_CONFIG.provider == "groq" and not AGENT_CONFIG.provider_error else None)
+
+
 def agent_provider():
-    """The model behind the agent loop, or None when OPENAI_API_KEY is not configured."""
-    return OpenAIChatProvider(client, AGENT_CONFIG.model) if client else None
+    """The model behind the agent loop (ULTRON_PROVIDER), or None when it is not configured."""
+    if AGENT_CONFIG.provider_error:
+        return None
+    if AGENT_CONFIG.provider == "groq":
+        return _GROQ_PROVIDER
+    return create_provider(AGENT_CONFIG, openai_client=client)
 
 
 def agent_available() -> bool:
@@ -1600,7 +1748,7 @@ def agent_available() -> bool:
 def build_agent(provider=None) -> AgentRuntime:
     limits = AgentLimits(max_steps=AGENT_CONFIG.max_steps, max_tool_calls=AGENT_CONFIG.max_tool_calls,
                          model_timeout=AGENT_CONFIG.model_timeout, tool_timeout=AGENT_CONFIG.tool_timeout,
-                         max_duration=AGENT_CONFIG.max_duration)
+                         max_duration=AGENT_CONFIG.max_duration, max_output_tokens=AGENT_CONFIG.max_output_tokens)
     return AgentRuntime(TOOLS, provider if provider is not None else agent_provider(), limits=limits,
                         runs=AGENT_RUNS, executor=AGENT_EXECUTOR)
 

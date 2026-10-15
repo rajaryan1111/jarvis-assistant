@@ -26,6 +26,10 @@ Do not commit API keys, private screenshots, face images, personal recordings, o
 - What the agent sends to OpenAI, provider error handling, safe diagnostics and the opt-in live test:
   [docs/M2_1_REAL_MODEL_VALIDATION.md](docs/M2_1_REAL_MODEL_VALIDATION.md). Logs never contain keys, bearer
   tokens, cookies, prompts or tool results.
+- Groq as the agent provider (`ULTRON_PROVIDER=groq`): same runtime and security gates, Groq key sent only
+  to the fixed Groq endpoint, unknown providers turn the agent off (no silent fallback), reasoning text
+  and Groq's `failed_generation` never logged, `gsk_` keys redacted and flagged by `check-secrets`:
+  [docs/M2_2_GROQ_PROVIDER.md](docs/M2_2_GROQ_PROVIDER.md).
 - Voice is not identity: spoken requests can never approve a high-impact action; only a signed-in HUD
   session can. The local tokens do not protect against someone who controls your OS account.
 - Before committing, run `uv run python -m ultron check-secrets` (CI runs it too).

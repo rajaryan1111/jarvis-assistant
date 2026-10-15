@@ -92,7 +92,7 @@ def _load_pdf(path: str) -> str:
                 texts.append(t)
         return "\n".join(texts)
     except Exception as e:
-        print("[KB] PDF read error:", path, e)
+        print("[KB] PDF read error:", path, type(e).__name__)
         return ""
 
 
@@ -101,7 +101,7 @@ def _load_textfile(path: str) -> str:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
     except Exception as e:
-        print("[KB] Text read error:", path, e)
+        print("[KB] Text read error:", path, type(e).__name__)
         return ""
 
 
@@ -168,10 +168,11 @@ def rebuild_knowledge_base(openai_client=None):
 
         chunks = _chunk_text(raw, chunk_size=1200, overlap=200)
         print(f"[KB] {path}: {len(chunks)} chunks")
-        for ch in chunks:
+        for idx, ch in enumerate(chunks, start=1):
             all_entries.append(
                 {
                     "source": path,
+                    "chunk_id": idx,
                     "text": ch,
                 }
             )
@@ -213,9 +214,12 @@ def _load_index():
     try:
         with open(INDEX_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return data.get("entries", [])
+        if not isinstance(data, dict):
+            return None
+        entries = data.get("entries", [])
+        return entries if isinstance(entries, list) else None
     except Exception as e:
-        print("[KB] Failed to load index:", e)
+        print("[KB] Failed to load index:", type(e).__name__)
         return None
 
 
@@ -233,22 +237,36 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
 
     # Embed the question using local model
     try:
-        model = _get_model()
+        emb_model = _get_model()
     except RagUnavailable as exc:
         return f"I cannot search your knowledge base yet, sir: {exc}"
     try:
-        q_emb = model.encode([question])[0]
+        q_emb = emb_model.encode([question])[0]
     except Exception as e:
-        print("[KB] Question embedding error:", e)
+        print("[KB] Question embedding error:", type(e).__name__)
         return "I tried to search your knowledge base, but the local embedding step failed, sir."
 
     # Score each chunk
     scored = []
     for e in entries:
-        emb = e.get("embedding")
-        if not emb:
+        if not isinstance(e, dict):
             continue
-        score = _cosine_similarity(q_emb, emb)
+        emb = e.get("embedding")
+        source = e.get("source")
+        text = e.get("text")
+        if (
+            not isinstance(emb, list)
+            or not emb
+            or not isinstance(source, str)
+            or not source.strip()
+            or not isinstance(text, str)
+            or not text.strip()
+        ):
+            continue
+        try:
+            score = _cosine_similarity(q_emb, emb)
+        except (TypeError, ValueError):
+            continue
         scored.append((score, e))
 
     if not scored:
@@ -261,8 +279,10 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
     context_parts = []
     for i, (score, e) in enumerate(top_k, start=1):
         src = os.path.basename(e["source"])
+        chunk_id = e.get("chunk_id")
+        label = f"{src}#chunk-{chunk_id}" if isinstance(chunk_id, int) else src
         snippet = e["text"].strip()
-        context_parts.append(f"[Source {i} - {src}]\n{snippet}\n")
+        context_parts.append(f"[Source {i} - {label}]\n{snippet}\n")
     context = "\n\n".join(context_parts)
 
     # We will not call GPT from here (that’s done in main.py via ask_gpt).
@@ -297,6 +317,11 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
             max_completion_tokens=300,
         )
         ans = (resp.choices[0].message.content or "").strip()
+        if not ans:
+            return (
+                "I could not generate a summary from your notes, sir. "
+                "Here is the raw context I found:\n\n" + context
+            )
         return ans
     except Exception as e:
         print("[KB] GPT error:", type(e).__name__)  # type only: messages can echo request details

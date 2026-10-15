@@ -31,7 +31,17 @@ def get_headlines():
     except (requests.RequestException, ValueError):
         return []
 
-    if data.get("status") != "ok":
+    # A successful HTTP status does not guarantee a valid API payload. Treat an
+    # unexpected JSON shape as unavailable data rather than crashing the caller.
+    if not isinstance(data, dict) or data.get("status") != "ok":
         return []
 
-    return [article["title"] for article in data.get("articles", []) if article.get("title")]
+    articles = data.get("articles")
+    if not isinstance(articles, list):
+        return []
+
+    return [
+        article["title"]
+        for article in articles
+        if isinstance(article, dict) and isinstance(article.get("title"), str) and article["title"].strip()
+    ]

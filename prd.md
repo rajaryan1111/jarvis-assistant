@@ -1,0 +1,373 @@
+# Jarvis / ULTRON — Product Requirements Document
+
+**Status:** Revised v2.0 — collaborative personal AI assistant  
+**Product identity:** Balanced ULTRON: a voice-first AI partner for study, research, coding, and creative building  
+**Primary platform:** macOS  
+**Execution model:** Local capabilities where practical; cloud AI when useful
+
+## 1. Product vision
+
+Build a capable, dependable voice assistant inspired by the *working relationship* Tony Stark has with JARVIS: a natural, proactive-feeling technical partner that helps its owner think, learn, build, and get work done. This is a product inspiration, not a promise of fictional autonomy or unrestricted control.
+
+ULTRON should be able to collaborate with the user on:
+- **Assignments and studying:** understand a prompt, explain concepts at the right level, outline answers, work through problems, use the user's notes as the primary source when requested, and help format deliverables.
+- **Research projects:** refine research questions, review literature supplied or found through permitted sources, compare claims, track citations and uncertainty, plan methodology, inspect datasets, and help build reproducible experiments.
+- **Coding and debugging:** understand an existing repository, explain code, plan changes, write and review patches, run tests when authorized, diagnose errors, and avoid unrelated changes.
+- **Website and app creation:** turn an idea into requirements, UI/UX, architecture, implementation tasks, working code, responsive layouts, tests, and deployment guidance.
+- **Everyday computer assistance:** use voice, memory, vision, and narrowly scoped computer tools to gather context and carry out approved actions.
+
+The aim is not simply a chatbot that speaks. It is a collaborative assistant that understands the current task, works across tools and files, keeps track of decisions, shows its work through evidence, and asks the owner when a decision or permission is needed.
+
+## 2. Target user and operating context
+
+The initial product is a single-user assistant for its owner on macOS, designed around the BTech CSE/ECE student journey. It supports natural spoken interaction with text/HUD/CLI fallbacks and adapts between tutor, research partner, coding/hardware partner, hackathon teammate, career coach, life organizer and bounded personal companion without pretending to be infallible.
+
+## 3. Product principles
+
+1. **Collaborate, don't merely answer:** help plan, execute, verify, and iterate.
+2. **Voice first, not voice only:** speech is the preferred interaction; text and HUD remain reliable controls.
+3. **Reliability before spectacle:** report what happened, what failed, and what remains.
+4. **Local first where practical:** prefer local tools and storage; use cloud AI when it adds value and disclose relevant data flow.
+11. **Whole-student support:** help with engineering and everyday student challenges while preserving autonomy, privacy, and real-world relationships.
+5. **User remains in control:** ask before consequential actions, external publication, deployment, destructive edits, purchases, or sending messages.
+6. **Security outside the model:** model output is a proposal, never authorization.
+7. **Evidence-led work:** distinguish sourced facts, inference, generated drafts, and verified results.
+8. **Respect project context:** inspect the existing repo, notes, constraints, and style before changing anything.
+9. **Incremental and reversible:** small diffs, tests, checkpoints, and clear rollback paths.
+10. **Honest academic and research support:** help the user understand and produce their own work; preserve citations and source fidelity.
+
+## 4. Core collaboration workflows
+
+### 4.1 Assignments and study
+- Accept a spoken or typed question, assignment prompt, rubric, lecture note, PDF, image, or question bank.
+- When asked to use supplied notes, ground the answer in those notes, preserve their terminology and mark unsupported gaps instead of silently substituting general knowledge.
+- Explain difficult ideas step by step, provide examples and exam-oriented structure when requested, and create revision plans, flashcards, or practice questions.
+- Help draft and revise reports, presentations, lab records, and code exercises.
+- Flag uncertain facts, missing inputs, and citation needs. Do not fabricate quotations, experiments, references, or results.
+
+### 4.2 Research projects
+- Help turn a broad idea into a research question, objectives, scope, hypotheses, and evaluation criteria.
+- Search permitted sources when requested; summarize and compare evidence with links/citations and publication context.
+- Maintain a literature matrix, dataset notes, experiment plan, reproducibility checklist, and decision log.
+- Assist with data cleaning, analysis scripts, visualizations, and paper/report structure.
+- Separate source-supported statements from inference and proposed work. Do not invent sources or claim experiments were run when they were not.
+
+### 4.3 Coding and repository work
+- Inspect repository URL, branch, HEAD, working tree, tests, and relevant docs before edits.
+- Explain existing code and errors, propose a small plan, make focused changes, and add regression tests.
+- Run available checks and report exact results, failures, and skips.
+- Avoid unrelated refactors, secret exposure, unsafe shell execution, and duplicate side effects.
+- Never commit, push, merge, open/update a PR, or modify remote Git state unless the user explicitly authorizes that action. When authorized, preserve unrelated branches and PRs.
+
+### 4.4 Website and app creation
+- Convert the idea into audience, content, user flows, requirements, visual direction, architecture, and acceptance criteria.
+- Help create responsive accessible UI, backend/API, persistence, tests, and setup/deployment documentation.
+- Prefer maintainable, incremental implementation over impressive but fragile demos.
+- Test mobile and desktop layouts; verify links, forms, error/loading states, and keyboard/accessibility basics.
+- Do not deploy, purchase domains, expose secrets, or publish user content without explicit approval.
+
+### 4.5 Voice and computer assistance
+- Accept natural speech and provide useful spoken answers.
+- Give concise listening/processing/approval/failure feedback.
+- Use relevant local context only with appropriate permissions.
+- Offer previews before consequential computer actions and support safe cancellation where feasible.
+- Never let voice recognition alone approve protected actions.
+
+## 5. Functional requirements
+
+| ID | Requirement | Acceptance criteria |
+|---|---|---|
+| FR-01 | Voice conversation | Configured microphone input and macOS speech output work with clear fallback/error states. |
+| FR-02 | Task collaboration | Assistant can clarify, plan, execute permitted steps, verify evidence, and summarize next actions. |
+| FR-03 | Assignment support | Can work from supplied prompts/notes and identify when a point is unsupported by the source. |
+| FR-04 | Research support | Source-aware summaries, citations, uncertainty, and reproducible experiment plans. |
+| FR-05 | Coding support | Repo-aware focused changes, tests, diagnostics, and no unapproved remote Git mutations. |
+| FR-06 | Website building | Requirements-to-implementation workflow with responsive/accessibility checks and deployment guidance. |
+| FR-07 | Bounded agent loop | Tool use, model calls, context, duration, output, and retries have enforced limits. |
+| FR-08 | Tool validation | Unknown, malformed, unavailable, or unauthorized calls do not execute. |
+| FR-09 | Safe authorization | All state-changing operations pass through central registry and policy. |
+| FR-10 | Protected approvals | Consequential/destructive actions require authorized HUD confirmation; voice cannot approve. |
+| FR-11 | Honest completion | Success is reported only when supported by evidence; otherwise status is partial/unverified/failed. |
+| FR-12 | Memory and continuity | User-approved project decisions and task state can be inspected, updated, and deleted. |
+| FR-13 | Provider choice | Provider selection is explicit; credentials remain isolated and secret. |
+| FR-14 | Local/cloud clarity | Explain relevant provider/external-service data flow; don't promise full offline operation. |
+| FR-15 | Diagnostics | Safe, content-minimizing error and execution summaries. |
+| FR-16 | Optional vision | Useful visual context only with permission, clear retention rules, and graceful failure. |
+
+## 6. Non-functional requirements
+
+**Security and privacy:** Never commit keys, tokens, recordings, screenshots, or private memory. Keep loopback/debug-off defaults, authentication, CSRF/Origin protections, risk tiers, and confirmation gates. Treat model output, web results, retrieved documents, and tool output as untrusted. Face recognition is not authentication.
+
+**Reliability:** Use bounded timeouts/retries; preserve completed evidence; avoid repeating actions after uncertain outcomes; fail closed when authorization is unclear.
+
+**Maintainability:** Keep providers replaceable, tools narrow, optional heavy dependencies optional, and milestones testable. Measure actual Mac voice performance before setting targets.
+
+**Research quality:** Preserve provenance, links, dates, and uncertainty. Do not fabricate citations or empirical results.
+
+**Academic integrity:** Help the user learn, reason, draft, and debug. Follow the user's institution/course rules; never claim the user personally performed work that did not occur.
+
+## 7. Interaction model
+
+The assistant should feel like a calm, technically capable teammate. It should remember relevant approved project context, explain its plan briefly, work in manageable steps, ask one focused question when blocked, and report outcomes in plain language. Hindi, English, and Hinglish are first-class requirements, including Romanized Hindi and Devanagari. Language-specific accuracy must be measured. Users should be able to switch naturally between voice and text.
+
+For larger tasks, use a loop: **understand → plan → do one bounded step → inspect evidence → continue or ask → summarize**.
+
+## 8. Scope boundaries and non-goals
+
+- No unrestricted autonomous computer control or arbitrary model-generated shell execution.
+- No model-generated approval of consequential/destructive actions.
+- No fabricated citations, test outcomes, screenshots, deployments, or completed actions.
+- No unapproved Git commit/push/merge, PR changes, external publication, or deployment.
+- No promise that all features work offline or that every generated program is correct.
+- No multi-user enterprise service in the initial product.
+- No wholesale rewrite or agent framework adoption without a measured need.
+
+## 9. Success measures
+
+- Deterministic tests, lint, compile checks, and secret scans pass.
+- No unauthorized execution, duplicate completed action, or false verified-success status in regression tests.
+- Assignment answers respect provided-source constraints when requested.
+- Research summaries preserve traceable citations and distinguish evidence from inference.
+- Coding tasks have reviewable diffs and accurately reported test outcomes.
+- Website tasks pass agreed responsive, functional, and accessibility checks.
+- Actual Mac measurements cover voice latency, recognition failures, interruption, and speech playback.
+- Each milestone records reproducible acceptance checks and known limitations.
+
+Set numeric latency/accuracy goals only after measuring a baseline.
+
+## 10. Priority order
+
+1. Protect repository and security boundaries; keep the current foundation stable (implemented and deterministically verified in M1–M2.3).
+2. Verify runtime reliability, external-source provenance, and truthful status reporting (implemented and deterministically verified; live-provider re-verification pending on the owner's Mac).
+3. Build reliable Hindi/English/Hinglish voice interaction and local wake-word activation (planned).
+4. Package an installable macOS desktop app while retaining the companion website/HUD (planned; Flask HUD/API is implemented).
+5. Build a shared task workspace for assignments, research, coding, and website projects (planned).
+6. Add inspectable project memory and local retrieval (legacy `memory.json` and optional `knowledge.py` exist; structured project memory is planned).
+7. Improve vision and contextual awareness (optional `vision.py` utilities exist; not strong authentication).
+8. Expand automation only when useful, testable, and authorized.
+
+## 11. Definition of done
+
+Scope and acceptance criteria are clear; code matches architecture; relevant checks are run and reported; source/citations and limitations are preserved; diff is reviewed; docs are updated. Remote Git actions require explicit authorization and must be verified afterward.
+
+## 12. Open decisions
+
+- Which workflows must work fully offline?
+- Which project files/notes may persist in memory, and for how long?
+- What voice latency/interruption targets are acceptable?
+- Which research sources and citation formats should be preferred?
+- Which website frameworks/templates should be defaulted to?
+- What evidence verifies each class of computer action?
+- Which proactive reminders or follow-ups are useful without being intrusive?
+
+## 13. Trilingual conversation and installable desktop product (v3 decision)
+
+### Language behavior
+ULTRON must understand and respond naturally in **Hindi, English, and Hinglish**. Hinglish includes Hindi-English code-switching in the same sentence, Romanized Hindi (for example, “Ultron, mera Python code debug karo”) and Hindi written in Devanagari (for example, “अल्ट्रॉन, मेरा कोड समझाओ”). The user should not have to select a language before every request.
+
+- Detect the language and script per utterance; support mixed-language requests and technical English terms inside Hindi sentences.
+- Reply in the language/style the user used most recently, unless they request another language. Allow explicit commands such as “reply in English”, “Hindi mein samjhao”, or “Hinglish mein bolo”.
+- Preserve meaning, names, code, file paths, commands, and technical identifiers during transcription and translation.
+- Handle accents, natural pauses, and common speech variations; ask a short clarification if confidence is too low rather than executing a risky action.
+- Speech recognition, language identification, text normalization, and speech synthesis are separate replaceable capabilities. Measure Hindi, English, and Hinglish quality independently on the target Mac. Do not claim equal accuracy before testing.
+- Wake-word detection for “Ultron” should work independently of the conversational language.
+
+### Installable macOS desktop app plus website
+The primary experience must be an **installable native-feeling macOS desktop app** that the owner can launch from Applications/Dock and use hands-free by saying “Ultron”, without first opening a browser or manually starting a web server. A website/HUD is also required as a companion interface for visible plans, sources, code diffs, task artifacts, settings, and secure approval flows.
+
+- Package the local assistant and its required runtime into a versioned macOS app/installer with clear setup, permissions, upgrade, and uninstall instructions.
+- After the user enables it, an optional login item may start the app at login. Do not silently enable startup or microphone access.
+- Use a lightweight, privacy-conscious local wake-word listener. Keep the microphone indicator/status visible; provide mute/pause/quit controls and clear permission recovery. Prefer local wake-word detection; do not continuously stream microphone audio to a cloud provider just to detect “Ultron”.
+- After wake-word detection, capture the request, process it through the configured local/cloud pipeline, and speak the response. Define timeout, false-wake, interruption, and no-network behavior.
+- The desktop app and website must share the same core/task state and policy boundaries rather than becoming two divergent assistants. The website must remain usable independently for typed interaction and visual review.
+- Bind any local web service to loopback by default, require authentication for protected operations, and retain existing Host/Origin/CSRF protections. Do not expose a local control API to the LAN by default.
+- Local-first does not mean fully offline: disclose which speech/LLM features need internet or cloud credentials and which operations remain local.
+- Website-only access is not an acceptable substitute for the installed voice/wake-word experience. Packaging and wake-word support are roadmap requirements until validated on the actual Mac.
+
+### New acceptance criteria
+- User can speak in Hindi, English, or Hinglish, including Romanized Hindi and Devanagari; the response follows the user's chosen language.
+- Wake-word behavior is tested for all three language contexts, with recognition and false-wake metrics recorded.
+- After installation and explicit microphone permission, saying “Ultron” can start a session without opening a browser. The app exposes visible listening/mute/quit state.
+- The companion website supports typed interaction and visual inspection while using the same authorization policy and task context.
+- Installer, launch-at-login opt-in, upgrade, and uninstall paths are documented and tested on a supported macOS version.
+- Network requirements, audio handling, and local/cloud boundaries are clearly disclosed.
+
+## 14. Student-life problem map: the BTech journey
+
+ULTRON is also a **student-life companion** for the broad BTech CSE/ECE experience, not only an engineering tutor. It should help with academic, technical, career, social, practical, and personal challenges through useful workflows—not claim to solve every problem or replace human relationships and professional services.
+
+### 14.1 Problem domains and proposed capabilities
+
+| Domain | Common student problems | Proposed ULTRON workflows |
+|---|---|---|
+| Academics and exams | Large syllabus, scattered notes, backlogs, exam anxiety, confusing concepts, teacher-specific answer formats | Source-grounded notes/PDF/QB/PYQ analysis; revision prioritization; easy-language explanations; worked examples; quizzes, flashcards, viva practice and progress tracking |
+| Labs and practicals | Lab records, viva questions, instrument confusion, debugging practicals, incomplete reports | Prepare from lab manuals; explain safe measurement procedures; help interpret errors and readings; organize lab-report drafts; distinguish simulated results from measurements actually taken |
+| CSE learning | DSA confusion, debugging, Git conflicts, databases, APIs, web development, AI/ML and deployment issues | Guided problem solving, repo-aware diagnosis, code review, focused patches, tests, explanations and portfolio-ready documentation |
+| ECE learning | Circuit analysis, analog/digital electronics, 8051/ARM, Verilog/VHDL, FPGA, PCB, sensors, embedded systems, DSP/MATLAB | Explain schematics and datasheets; help calculate and simulate; troubleshoot from supplied evidence; assist with firmware and HDL; distinguish simulation from real hardware verification |
+| Projects and building | Unclear scope, poor architecture, limited budget, integration failures, weak documentation | Idea-to-requirements flow; stack/component choices; task breakdown; project memory; implementation/test loop; budget-aware alternatives; demo and report preparation |
+| Hackathons and competitions | Choosing an idea, tight deadlines, team coordination, hardware/software integration, weak pitches | Compare ideas against novelty, feasibility, impact, time and budget; define MVP; assign owners/dependencies; track blockers; prepare demos, architecture and pitch practice |
+| Teamwork | Unequal contributions, missed deadlines, merge conflicts, disagreements | Shared task/decision log, clear ownership, integration checklist, neutral communication drafts and escalation options |
+| Career and placements | Unclear career direction, skill gaps, DSA/interview pressure, weak resume, missed internships | Role exploration; skill-gap plan; interview practice; truthful resume/project review; opportunity tracker; deadline reminders and application preparation |
+| Research and innovation | Finding trustworthy sources, citations, literature gaps, dataset/method choices, reproducibility | Source-aware literature matrix; citation/provenance tracking; research-question refinement; dataset and experiment logs; transparent distinction between evidence, inference and hypothesis |
+| Productivity | Procrastination, deadline collisions, unrealistic plans, context switching | Time-aware task plans; small next steps; opt-in reminders; progress reviews; safe rescheduling and resume-from-last-state |
+| Friendship and loneliness | Feeling left out, homesickness, social awkwardness, lack of community | Empathetic conversation; low-pressure ways to meet people through clubs/interests; conversation practice; encouragement of real human connection |
+| Dating and relationships | Expressing feelings, conflict, rejection, jealousy, breakups, boundaries | Respectful message drafting; perspective-taking; communication rehearsal; boundary reflection and emotional processing without claiming to know another person's private thoughts |
+| Well-being | Stress, burnout, comparison, fear of failure, confidence dips | Optional check-ins/journaling, grounding exercises, workload reflection and support-seeking prompts; no diagnosis or claim to replace professional care |
+| Money and student living | Limited allowance, hostel routines, food planning, travel and component costs | Opt-in expense/budget planning; affordable options; shopping/packing lists; meal or trip planning based on stated constraints; no unapproved purchases |
+| Everyday administration | Forms, scholarships, registration, attendance, documents and deadlines | Checklist and calendar support, document organization and reminders; verify rules from authoritative sources when needed |
+| Communication and creativity | Viva, presentations, public speaking, English confidence, writing, guitar, photography, video creation | Role-play, presentation/pitch rehearsal, language switching, feedback, practice plans and creative project assistance |
+| Digital safety and accessibility | Phishing, account risks, information overload, accessibility barriers, different learning needs | Safety education, source evaluation, permission explanations, alternative learning formats and user-configured workflows |
+| Life after college | Jobs vs higher study vs research/entrepreneurship, relocation and uncertainty | Compare options against user-stated goals, costs, constraints and evidence; help form experiments and decision plans without pretending to predict the future |
+
+### 14.2 CSE/ECE and interdisciplinary focus
+
+ULTRON should support both shared engineering workflows and branch-specific tools. CSE examples include algorithms, software engineering, APIs, databases, AI/ML, cybersecurity and deployment. ECE examples include circuits, electronics, microcontrollers, embedded firmware, HDL/FPGA, DSP, signal processing, sensors and PCB workflows. Interdisciplinary projects can connect software with robotics, IoT, computer vision, edge AI and sensor systems.
+
+For hardware and lab work, ULTRON must label whether a result is theoretical, simulated, inspected from logs, or physically measured. It must never claim a board, circuit, or instrument works without appropriate evidence.
+
+### 14.3 Student context and consent
+
+- Support separate contexts for courses, projects, hackathons, career preparation, personal planning and private reflection.
+- Store only approved useful memory; let the student inspect, correct, export and delete it.
+- Make calendar, reminders, expense tracking, mood check-ins, audio, screenshots and other sensitive integrations opt-in.
+- Keep private relationship and well-being conversations out of shared project/team workspaces unless the user explicitly moves selected content.
+- Let the student switch between “just listen”, “help me think”, “make a plan”, and “take an approved action”.
+- Do not optimize every interaction for productivity; rest, social connection and doing nothing can be valid user goals.
+
+### 14.4 Trust and well-being boundaries
+
+ULTRON may offer supportive conversation, reflection and practical options, but must not present itself as a human, exclusive relationship, therapist, doctor, financial adviser or guaranteed career authority. Encourage appropriate trusted-person or professional support for persistent/severe distress. Never foster emotional dependency, shame the user, or claim to know what another person secretly feels. Relationship help must respect consent and privacy and must not assist stalking, manipulation or surveillance.
+
+Financial planning must be transparent and based on user-provided assumptions; purchases or financial transactions require explicit authorization. Academic help should support learning and follow course rules; do not fabricate experiments, citations, credentials or work performed.
+
+### 14.5 Student-life acceptance criteria
+
+- A student can create distinct course/project/personal contexts and inspect or delete saved memory.
+- The assistant can turn a deadline list into a realistic plan and revise it when time or priorities change.
+- Course answers can be grounded in supplied notes, with source gaps called out.
+- Hackathon planning captures time, budget, team skills, dependencies, MVP and demo evidence.
+- CSE/ECE workflows distinguish proposed code/simulations from tests and physical measurements.
+- Career advice states assumptions and uncertainty and never invents achievements or guarantees placements.
+- Optional personal features are opt-in, private by default and easy to disable.
+- Relationship and well-being workflows preserve autonomy, consent and real-world support.
+- Each workflow has tests for honest status, privacy, cancellation and permission boundaries.
+
+## 15. Expanded success measures
+
+In addition to the engineering acceptance criteria, measure task completion and student value: time required to find the next study step; correctness and source fidelity of notes-based answers; hackathon milestone visibility; test/verification accuracy; reminder usefulness; student-rated clarity and emotional tone; and ease of correcting/deleting memory. Use opt-in feedback and privacy-preserving aggregate metrics. Do not infer sensitive traits or score a student's emotional state without explicit consent.
+
+## 16. Voice-driven project copilot and senior-engineer mentor (v5 requirements)
+
+### 16.1 Product promise
+ULTRON should be the user's project-first technical partner: a voice-controlled, locally orchestrated assistant that helps a BTech student plan, understand, build, test, debug, document, review and present multiple projects. It should contribute substantial engineering work when explicitly asked, while keeping the user informed and in control. Its mentoring style should resemble a thoughtful senior engineer: practical, candid, context-aware, willing to challenge assumptions, and clear about trade-offs—not a blindly agreeable code generator.
+
+This is a target product specification, not a claim that every integration or capability already exists.
+
+### 16.2 Project command center
+- Maintain separate, switchable workspaces for each Git repository, branch, issue, task, deadline, stack, architecture decision, environment and project-specific instruction.
+- On request, inspect repository status, files, tests, issues, recent commits, PRs and documentation before proposing changes. State what was inspected and what was inaccessible.
+- Convert voice requests into a plan: goal, current state, assumptions, affected files/services, dependencies, risks, verification, rollback/recovery and approval checkpoints.
+- Support scoped implementation: explain the plan, make bounded changes, run relevant tests and linters, inspect diffs, summarize evidence and leave a clean handoff.
+- Keep project-scoped decision logs, TODOs, unresolved questions, bugs, technical debt, test evidence and next actions. Cross-project retrieval must be explicit.
+- Prioritize multiple projects by deadlines, impact, blockers, learning value, risk and available time; explain the reasoning and allow overrides.
+
+### 16.3 Voice-first command examples
+Support natural English, Hindi, Hinglish, Romanized Hindi and Devanagari where recognition permits. Example intents:
+- “Ultron, open my Indian Standards project and explain the architecture.”
+- “Check the failing tests, find the root cause, and show me a safe fix before changing anything.”
+- “Implement this issue on a new branch, run tests, and prepare a diff for review.”
+- “Compare the Supabase schema with frontend types and tell me what could break.”
+- “Ask Claude or Codex to review this design, but don't send secrets or private files.”
+- “Before I merge this PR, explain consequences, risks and rollback.”
+- “Summarize changes across my projects and suggest the best next task.”
+Voice must never be the only confirmation channel for high-impact actions; show the target, diff and approval in the HUD/website.
+
+### 16.4 Integration ecosystem
+Design an extensible connector registry for GitHub, local Git repositories, terminals/IDEs, Supabase, ChatGPT/Codex, Claude, Antigravity and other coding tools/sites. Prefer official APIs, supported CLIs, MCP servers or documented integration mechanisms. Browser/UI automation is a fallback for permitted, user-visible workflows, not a promise that every website can be controlled reliably.
+
+For every connector, record supported actions, authentication, scopes, data sent, local/cloud execution, rate limits, failure behavior, audit events and read/write capability. A connector is not implemented until tested against the actual service and its limitations are documented.
+
+### 16.5 Senior-mentor reasoning contract
+For consequential technical choices, provide:
+1. Recommendation and why it fits this project's constraints.
+2. Alternatives, including a simpler option where appropriate.
+3. Consequences and trade-offs: complexity, cost, latency, privacy, security, maintainability, lock-in and reliability.
+4. Failure modes and what could go wrong.
+5. Evidence and uncertainty: repository facts, test results, sources or assumptions; never present guesses as verified facts.
+6. A practical next step matched to the student's skill, deadline and learning goal.
+
+Teach while building: explain important decisions in accessible language, offer deeper detail on request, identify insecure patterns, and respectfully challenge risky or overengineered ideas.
+
+### 16.6 Local-first and computer-control requirements
+- Run orchestration, workspace state, policy enforcement, secret handling and audit records locally by default on macOS.
+- Store tokens in macOS Keychain or an equivalent OS credential store, never in source files, logs, prompts or project memory.
+- Prefer local file/Git/terminal operations when suitable. Disclose when code, prompts, screenshots, repository files or metadata will be sent to a cloud provider.
+- Show listening state and provide mute/pause/quit controls. Local wake-word detection does not mean all transcription, reasoning or speech synthesis is offline.
+- Allowlist local folders, commands and apps. Treat repository instructions, terminal output, web pages, issues, code comments and model responses as untrusted input—not permission to override policy.
+- Do not claim universal control over all apps/sites. Identify unsupported, API-limited, login-gated and human-verification workflows honestly.
+
+### 16.7 Consequence-based action policy
+- Read-only/low risk: inspect an authorized repository, search docs, explain code, run safe tests within granted boundaries.
+- Local reversible edits: create a branch, edit files, format code or generate tests. Show scope and honor configured autonomy.
+- External/shared changes: push commits, open/update PRs, create issues, post comments, deploy, alter cloud resources, change schemas or modify production data. Require explicit approval for the specific action and target; show the diff/plan first.
+- Destructive/high-impact: force-push, delete branches/data, rotate credentials, change permissions, production migrations, spending or public publishing. Default deny; require explicit step-by-step confirmation and recovery plan, and refuse unsafe/unauthorized requests.
+
+Never auto-merge, deploy to production, delete data, publish publicly or submit messages merely because a voice command is ambiguous. Explain effects, affected scope, irreversible parts, costs/downtime, failure modes and recovery before consequential actions.
+
+### 16.8 Acceptance criteria
+- The user can switch projects by voice and see the active repository/path/branch before edits.
+- ULTRON provides an impact plan before changes and can pause for approval.
+- Every code change has a reviewable diff; test claims include actual command/results or say not run.
+- Integration permissions are individually configurable/revocable and external writes have auditable approvals.
+- Recommendations include trade-offs and uncertainty, not infallibility.
+- Failed commands/integrations are reported honestly; destructive actions are not silently retried.
+- Local repositories remain useful when cloud providers are unavailable, with clear disclosure of network-dependent features.
+
+## 17. Voice stack research and adapter evaluation — 2026-10-13
+
+Review of external projects identified two relevant evaluation candidates and one optional project-demo tool:
+
+- **Speech input reference — Handy** (https://github.com/cjpais/handy, MIT): use its offline-first transcription UX, VAD, configurable push-to-talk, local model selection, visible recording state, cancellation, and graceful failure as design references. Do not assume Handy is integrated into ULTRON.
+- **Speech output candidate — OmniVoice** (https://github.com/k2-fsa/OmniVoice, Apache-2.0): evaluate as an optional multilingual TTS adapter for Hindi, English, and Hinglish, including technical terms and code-switching. Do not make it the default until tested on target Apple Silicon for quality, latency, memory, install size, and offline behavior.
+- **Optional demo media — HeyGen HyperFrames** (https://github.com/heygen-com/hyperframes, Apache-2.0): consider only for future project-demo or pitch-video generation if requested. It is not a core assistant dependency. The originally supplied URL https://github.com/heygen-comP did not identify a specific repository.
+
+### Acceptance criteria for a speech-engine decision
+- Keep STT, language identification, VAD, wake-word detection, and TTS as separate replaceable capabilities.
+- Benchmark Hindi, English, Romanized Hindi, Devanagari, and code-switched Hinglish with a repeatable, user-approved test set.
+- Measure real target-Mac latency, memory/resource use, install footprint, model download needs, and behavior without network access.
+- Compare transcription errors and spoken pronunciation for technical identifiers, filenames, commands, numbers, and mixed-language sentences.
+- Record model/repository versions, license and model terms, test conditions, results, and limitations before selecting a default.
+- Voice cloning is disabled by default; require explicit user choice and lawful permission for any reference voice. Do not upload reference audio without a clear disclosure and approval.
+- These are evaluation requirements, not claims that either project has been integrated or validated in ULTRON.
+
+
+## 18. Engineering workflow requirements
+
+ULTRON's own development must follow the project-adapted workflow in [docs/development-workflow.md](docs/development-workflow.md), with concise always-on rules in [AGENTS.md](AGENTS.md). For non-trivial changes, clarify the user outcome and acceptance criteria, plan the smallest coherent implementation, write a regression test before production changes, investigate root causes before fixes, review the diff, and run fresh verification before claiming completion. Small, unambiguous tasks should remain lightweight; the process must not become ceremony that delays simple answers.
+
+These are development-process requirements for contributors and coding agents, not runtime features or a claim that a particular coding-agent plugin is installed.
+
+
+## 18. Evaluation-first quality gates — 2026-10-13
+
+Before introducing agent frameworks, new retrieval engines, or multi-agent orchestration, ULTRON should demonstrate a measurable gap in the current implementation. Use a small deterministic regression corpus for observable safety and correctness behaviors: malformed/unknown tool-call rejection; central policy/registry enforcement; retry idempotency for side effects; cancellation and budget limits; evidence-backed completion status; source-faithful study answers and verifiable citations. Keep model-graded quality evaluations separate from deterministic CI so routine local tests remain fast, reproducible, and cost-controlled. Include English, Hindi, Romanized Hindi, Devanagari, and code-switched Hinglish fixtures for language-sensitive behavior. The initial evaluation set is a requirement, not a claim that such a corpus already exists.
+
+For document retrieval, benchmark the current baseline against keyword, semantic, and hybrid retrieval on representative course notes, question banks, and project documents before adding reranking or a new store. Track retrieval coverage/relevance, unsupported-answer rate, citation support, language/script behavior where applicable, latency, and operational cost. Add complexity only when measured results justify it.
+
+Research basis: [selective review of awesome-llm-apps](docs/research/awesome-llm-apps-review.md). These decisions adapt evaluation and retrieval patterns; they do not adopt the upstream framework stack.
+
+
+## 19. Run observability and end-to-end budgets — 2026-10-13
+
+For multi-step tasks, ULTRON should expose honest per-task progress and a privacy-conscious event history. Events may include request accepted, plan checkpoint, provider call, tool proposal, policy/approval decision, tool start/end, cancellation, failure, and final outcome. Each event should have a task/correlation ID, timestamp, duration where applicable, status, and minimal non-sensitive metadata. Do not log raw conversation, transcripts, screenshots, secrets, or file contents by default. UI history must be backed by actual recorded events, not reconstructed from model claims.
+
+Enforce cumulative task budgets across the whole agent loop: model/tool steps, elapsed time, retries, output/context size, and optional token/spend caps when reliable provider usage is available. A budget stop preserves completed artifacts/evidence and returns a clear partial/budget-exhausted status. State-changing tool retries must reconcile the prior outcome or stop for review rather than repeat an uncertain side effect.
+
+Research basis: [Ruflo selective review](docs/research/ruflo-review.md). These requirements are proposed; they do not imply that structured run history or cumulative budgets are fully implemented today.
+
+
+## 20. External-source reliability and evidence — 2026-10-13
+
+Future research and information tools should return source-attributed structured results, not unqualified text alone. Preserve canonical URL, retrieval time, source publication/update time when available, evidence excerpt or source identifier, and a clear state for unknown, stale, blocked, empty, failed, or verified results. A retrieval score proposes candidates; it does not establish truth. The assistant should say when evidence is insufficient.
+
+For external requests, keep the current provider-neutral tool boundary and add only a source adapter that satisfies a real user requirement. The initial optional research candidates are arXiv Atom, OpenAlex, and selected RSS feeds; none is an approved runtime dependency. See [GitHub account audit](docs/research/github-account-audit-2026-10-13.md).

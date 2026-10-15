@@ -22,15 +22,47 @@ os.environ["ULTRON_KNOWLEDGE_DIR"] = str(_SANDBOX / "knowledge_docs")
 os.environ["ULTRON_KNOWLEDGE_INDEX"] = str(_SANDBOX / "knowledge_index.json")
 os.environ["ULTRON_FACE_DIR"] = str(_SANDBOX / "faces")
 os.environ["ULTRON_SCREENSHOT_DIR"] = str(_SANDBOX / "screenshots")
+os.environ["ULTRON_PROJECT_ROOT"] = str(_SANDBOX / "project")
+(_SANDBOX / "project").mkdir(exist_ok=True)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# Opt-in live provider tests (tests/live) need the owner's real key and model settings, which
+# are scrubbed below. Capture them first, only when explicitly opted in, and hand them to the
+# live tests through the ``live_env`` fixture (never through os.environ, so every other test
+# in the same session still runs without credentials).
+LIVE_OPT_INS = {"ULTRON_LIVE_OPENAI": "openai", "ULTRON_LIVE_GROQ": "groq"}
+
+
+def capture_live_env(environ, dotenv_path: Path) -> dict[str, str]:
+    """``.env`` values overlaid with the real environment, or {} when no live test is opted in."""
+    if not any((environ.get(flag) or "").strip() == "1" for flag in LIVE_OPT_INS):
+        return {}
+    values: dict[str, str] = {}
+    if dotenv_path.is_file():
+        from dotenv import dotenv_values
+
+        values.update({k: v for k, v in dotenv_values(dotenv_path).items() if v is not None})
+    values.update(environ)
+    return values
+
+
+LIVE_ENV = capture_live_env(os.environ, PROJECT_ROOT / ".env")
+
 for _name in (
     "ULTRON_API_TOKEN", "ULTRON_API_TOKEN_FILE", "ULTRON_CLIENT_TOKEN", "ULTRON_CLIENT_TOKEN_FILE",
     "ULTRON_VOICE_TRUST", "ULTRON_SESSION_HOURS", "ULTRON_HOST", "ULTRON_PORT", "ULTRON_DEBUG",
     "ULTRON_ALLOW_NON_LOOPBACK", "ULTRON_ALLOWED_HOSTS", "ULTRON_ALLOWED_ORIGINS",
     "OPENAI_API_KEY", "WEATHER_API_KEY", "NEWS_API_KEY", "CRICKET_API_KEY", "PICOVOICE_ACCESS_KEY",
+    "GROQ_API_KEY", "OPENAI_BASE_URL", "ULTRON_PROVIDER", "ULTRON_GROQ_MODEL", "ULTRON_GROQ_REASONING_EFFORT",
+    "ULTRON_AGENT", "ULTRON_AGENT_MODEL", "ULTRON_CHAT_MODEL", "ULTRON_AGENT_MAX_OUTPUT_TOKENS",
 ):
     os.environ.pop(_name, None)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+@pytest.fixture(scope="session")
+def live_env() -> dict[str, str]:
+    """Environment for opt-in live provider tests (empty unless ULTRON_LIVE_* = 1)."""
+    return dict(LIVE_ENV)
 
 
 class FakeRunner:
@@ -96,15 +128,18 @@ def legacy(monkeypatch, tmp_path, fake_runner, fake_opener):
     cache_dir.mkdir()
     shots = tmp_path / "Shots"
     shots.mkdir()
+    project_dir = tmp_path / "Project"
+    project_dir.mkdir()
     monkeypatch.setattr(main, "TOOLS", main.build_tool_registry(
         platform="darwin", runner=fake_runner, cache_dir=cache_dir, opener=fake_opener,
-        screenshot_dir=shots, temperature_candidates=()))
+        screenshot_dir=shots, temperature_candidates=(), project_root=project_dir))
     monkeypatch.setattr(main.subprocess, "run", fake_runner)
     monkeypatch.setattr(main.webbrowser, "open", fake_opener)
     monkeypatch.setattr(main, "jarvis_sleep", False)
     monkeypatch.setattr(main, "memory", fresh_memory())
     monkeypatch.setattr(main, "save_memory", lambda mem: None)
     monkeypatch.setattr(main, "cache_dir_for_tests", cache_dir, raising=False)
+    monkeypatch.setattr(main, "project_root_for_tests", project_dir, raising=False)
     return main
 
 

@@ -102,7 +102,7 @@ registers a new tool and shows that it is offered and used with no other change.
 
 | Tier | Offered tools |
 |---|---|
-| OBSERVE (read-only) | `time.now`, `system.status`, `system.cpu_temperature`, `reminders.list`, `memory.list_notes`, `web.search`*, `wiki.summary`*, `weather.current`*, `news.headlines`* |
+| OBSERVE (read-only) | `time.now`, `system.status`, `system.cpu_temperature`, `reminders.list`, `memory.list_notes`, `web.search`*, `wiki.summary`*, `weather.current`*, `news.headlines`*, `project.inspect`*, `project.explain`*, `project.search`* |
 | ROUTINE (reversible) | `memory.add_note`, `reminders.add`, `apps.open`, `web.open_url`, `system.set_volume`, `system.brightness` |
 
 \* `external_content=True`: the result contains outside text (see §6).
@@ -226,7 +226,8 @@ confirmation store.
 
 - **Voice and router (`main.handle_command`).** Legacy commands still go through the keyword router
   first, with unchanged behaviour. A request the router does not recognise goes to the agent when it
-  is enabled and `OPENAI_API_KEY` is set. Otherwise it goes to the old single-shot chat (`ask_gpt`).
+  is enabled and its model provider is configured (`OPENAI_API_KEY`, or `ULTRON_PROVIDER=groq` with
+  `GROQ_API_KEY`; see [M2.2](M2_2_GROQ_PROVIDER.md)). Otherwise it goes to the old single-shot chat (`ask_gpt`).
   The prefix `agent: …` forces the agent. Sleep mode still blocks everything except wake-up.
 - **HUD/API `POST /ask`.** Takes `mode` (`auto`, the default, or `agent`), with the same auth, CSRF and
   origin checks as before. The JSON adds `agent` (`status`, `verified`, `run_id`, `steps`, `problems`),
@@ -260,9 +261,12 @@ with a warning. Values outside the range are clamped.
 | `ULTRON_AGENT_TOOL_TIMEOUT` | 20 | 1–120 s |
 | `ULTRON_AGENT_MAX_SECONDS` | 45 | 5–600 s (keep it under 60 s if you use the wake-word listener) |
 | `ULTRON_AGENT_MAX_CONCURRENT` | 4 | 1–8 |
+| `ULTRON_AGENT_MAX_OUTPUT_TOKENS` (M2.2) | 400 (OpenAI) / 1024 (Groq) | 64–4096 per model call |
+| `ULTRON_PROVIDER` (M2.2) | `openai` | `openai` or `groq`; anything else turns the agent off |
 
-The model needs `OPENAI_API_KEY`, which is loaded as in M1. Without it the agent reports that it is
-unavailable, and `ultron agent` exits with code 2.
+The model needs `OPENAI_API_KEY` (or, with `ULTRON_PROVIDER=groq`, `GROQ_API_KEY`), loaded as in M1.
+Without it the agent reports that it is unavailable, and `ultron agent` exits with code 2. Groq details:
+[M2_2_GROQ_PROVIDER.md](M2_2_GROQ_PROVIDER.md).
 
 ## 11. Tests and verification
 
