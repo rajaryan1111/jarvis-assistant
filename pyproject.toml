@@ -21,6 +21,9 @@ dependencies = [
     "psutil>=5.9",
     "openai>=1.40",
     "wikipedia>=1.4,<2",
+    # ultron/tools/project.py falls back to tomli when tomllib is unavailable (Python 3.10);
+    # declared so a core-only 3.10 install can still import main / the CLI.
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

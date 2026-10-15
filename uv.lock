@@ -868,6 +868,7 @@ dependencies = [
     { name = "psutil" },
     { name = "python-dotenv" },
     { name = "requests" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "wikipedia" },
 ]
 
@@ -933,6 +934,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'rag'", specifier = ">=2.7" },
     { name = "speechrecognition", marker = "extra == 'voice'", specifier = ">=3.10" },
     { name = "speechrecognition", marker = "extra == 'wakeword'", specifier = ">=3.10" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "wikipedia", specifier = ">=1.4,<2" },
 ]
 provides-extras = ["voice", "wakeword", "vision", "rag", "dev", "all"]
