@@ -24,6 +24,11 @@ Commands
                    routine tools only (anything that needs approval is refused here; use the HUD)
   race "<question>"  ask several configured models the same question in parallel (bounded,
                    advisory, never executes anything) and print an evidence-based comparison
+  autotune run     benchmark configured model profiles on a fixed synthetic suite (bounded,
+                   opt-in, objective checks only; model output is never executed)
+  autotune route <category>  recommend a profile for coding/reasoning/summarisation from the
+                   stored results, with the rule and every reason printed (advisory only)
+  autotune show|clear        inspect or delete the stored tuning results
 """
 
 from __future__ import annotations
@@ -448,6 +453,31 @@ def build_parser() -> argparse.ArgumentParser:
                            "--evidence is given, on a usable non-racer)")
     race.add_argument("--json", action="store_true", help="print the machine-readable report")
     race.set_defaults(func=_cmd_race)
+    tune = sub.add_parser("autotune", help="capability routing: benchmark configured models on a "
+                                           "fixed synthetic suite (opt-in, bounded, advisory; "
+                                           "docs/M2_5_AUTOTUNE.md)",
+                          description="Runs a fixed synthetic task suite (coding, reasoning, "
+                                      "summarisation) against the configured model profiles and "
+                                      "stores objective results; 'route' recommends a profile per "
+                                      "category with a transparent rule. Model output is never "
+                                      "executed, no answer quality is claimed, and nothing is "
+                                      "reconfigured.")
+    tune.add_argument("action", choices=["run", "route", "show", "clear"],
+                      help="run the suite; route a category from stored results; show them; clear them")
+    tune.add_argument("category", nargs="?", choices=["coding", "reasoning", "summarisation"],
+                      help="for 'route': the task category to recommend a profile for")
+    tune.add_argument("--models", metavar="LIST",
+                      help="comma-separated provider[:model] profiles (default: the race roster rules)")
+    tune.add_argument("--budget", type=float, metavar="S",
+                      help="total wall-clock seconds for the run (default 240, clamped 30..900)")
+    tune.add_argument("--min-pass", type=float, metavar="F",
+                      help="routing threshold 0..1: fraction of a category's tasks a profile must "
+                           "have passed (default 0.5)")
+    tune.add_argument("--no-save", action="store_true", help="do not store the results file")
+    tune.add_argument("--spec", action="store_true",
+                      help="with 'route': print only the winning spec (composes with `race --models`)")
+    tune.add_argument("--json", action="store_true", help="print machine-readable output")
+    tune.set_defaults(func=_cmd_autotune)
     return parser
 
 
@@ -529,6 +559,89 @@ def _cmd_race(args: argparse.Namespace) -> int:
     else:
         print(race_mod.render(report))
     return 0 if report.answers else 1
+
+
+def _cmd_autotune(args: argparse.Namespace) -> int:
+    import json
+    from dataclasses import asdict
+
+    from ultron.agent import autotune as tune_mod
+    from ultron.agent.race import resolve_race
+
+    env = dict(os.environ)
+    if args.budget is not None:
+        env["ULTRON_AUTOTUNE_BUDGET"] = str(args.budget)  # clamped inside tuning_bounds
+    if args.min_pass is not None:
+        env["ULTRON_AUTOTUNE_MIN_PASS"] = str(args.min_pass)
+
+    if args.action == "clear":
+        removed = tune_mod.clear_results(env)
+        print("stored tuning results cleared" if removed else "no stored tuning results to clear")
+        return 0
+    if args.action == "show":
+        payload, problems = tune_mod.load_results(env)
+        for problem in problems:
+            print(f"[autotune] {problem}")
+        if payload is None:
+            return 1
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(tune_mod.render_stored(payload))
+        return 0
+    if args.action == "route":
+        if not args.category:
+            print("autotune route needs a category: coding, reasoning or summarisation",
+                  file=sys.stderr)
+            return 1
+        payload, problems = tune_mod.load_results(env)
+        for problem in problems:
+            print(f"[autotune] {problem}")
+        if payload is None:
+            return 1
+        decision = tune_mod.route_category(payload, args.category,
+                                           tune_mod.tuning_bounds(env, []).min_pass)
+        if args.spec:
+            if not decision.winner:
+                print("[autotune] no profile qualifies; nothing printed", file=sys.stderr)
+                return 1
+            print(decision.winner)  # composes: ultron race --models "$(ultron autotune route coding --spec)"
+            return 0
+        if args.json:
+            print(json.dumps(asdict(decision), indent=2, ensure_ascii=False))
+        else:
+            print(tune_mod.render_route(decision))
+        return 0 if decision.winner else 1
+
+    if not tune_mod.enabled(env):
+        print("[autotune] REFUSED: ULTRON_AUTOTUNE=0 disables tuning runs", file=sys.stderr)
+        return 1
+    problems: list[str] = []
+    bounds = tune_mod.tuning_bounds(env, problems)
+    specs = [part.strip() for part in args.models.split(",") if part.strip()] if args.models else None
+    plan = resolve_race(env, specs)
+    for problem in (*problems, *plan.problems):
+        print(f"[autotune] {problem}")
+    if plan.refused:
+        print(f"[autotune] REFUSED: {plan.refused}", file=sys.stderr)
+        return 1
+    if not plan.racers:
+        print("[autotune] no usable profiles; nothing was sent", file=sys.stderr)
+        return 1
+    print(f"[autotune] racing {len(plan.racers)} profile(s) over {len(tune_mod.AUTOTUNE_SUITE)} "
+          f"fixed synthetic tasks (budget {bounds.budget_s:g}s); model output is never executed")
+    report = tune_mod.run_tuning(plan, bounds)
+    if args.json:
+        print(json.dumps(asdict(report), indent=2, ensure_ascii=False))
+    else:
+        print(tune_mod.render_tuning(report))
+    if not args.no_save:
+        path = tune_mod.save_results(report, env)
+        print(f"[autotune] results stored in {path} (0600, redacted; `ultron autotune clear` "
+              "removes them)")
+    answered = any(o.status in ("passed", "failed") for profile in report.profiles
+                   for o in profile.tasks)
+    return 0 if answered else 1
 
 
 def main(argv: list[str] | None = None) -> int:

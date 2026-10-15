@@ -154,6 +154,15 @@ answers against evidence **you** provide (`--evidence FILE`). `ULTRON_LOCAL_ONLY
 cloud racer refuses the whole race. Limits, privacy boundaries and synthesis rules:
 [docs/M2_4_MODEL_RACING.md](docs/M2_4_MODEL_RACING.md).
 
+**Pick the right model per task (opt-in):** `uv run ultron autotune run` benchmarks your configured model
+profiles on a small fixed suite of synthetic tasks (coding, reasoning, summarisation) — objective checks only
+(exact answers, strict JSON, static code-shape regexes, length/fact constraints, latency); model output is
+**never executed** and no answer "quality" is claimed. `uv run ultron autotune route coding` then recommends a
+profile with the rule and every reason printed, and `--spec` composes straight into `race --models`. Results
+persist to one redacted `0600` file in the data directory; nothing is reconfigured automatically, and
+`ULTRON_LOCAL_ONLY=1` is enforced with zero cloud clients constructed. Methodology, bounds and limitations:
+[docs/M2_5_AUTOTUNE.md](docs/M2_5_AUTOTUNE.md).
+
 **What goes to the model provider (OpenAI, Groq or a local Ollama server):** your request text and the results of the tools used in that run. That can include
 your notes or reminders if the model lists them, plus weather, news and system status. It never includes
 keys, tokens, cookies, files, screenshots, audio or past conversations. A typical request is 2–4 model calls
