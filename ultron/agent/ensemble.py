@@ -271,13 +271,18 @@ class EnsembleProvider:
         try:
             turn = self.primary.complete(merged, tools, timeout=remaining, max_output_tokens=max_output_tokens)
         except ProviderError as err:
-            # The advisory phase has already been paid for. Report what it cost on the error itself
-            # so the runtime can still count it against the run's token budget and usage; without
-            # this a failed turn would under-report by exactly one advisory phase.
+            # The advisory phase has already been paid for. Preserve any usage the primary provider
+            # reports for its failed call as well; otherwise wrapping the error would replace it
+            # with advisory-only usage and under-report the total spend.
+            primary_usage = err.usage or Usage()
+            combined_usage = Usage(
+                primary_usage.input_tokens + advice_usage.input_tokens,
+                primary_usage.output_tokens + advice_usage.output_tokens,
+            )
             if not extra_in and not extra_out:
                 raise
             raise ProviderError(err.kind, err.message, status=err.status, code=err.code,
-                                usage=advice_usage) from err
+                                usage=combined_usage) from err
         if not extra_in and not extra_out:
             return turn
         # Report the advisory pass' real cost: the runtime's token budget must see every call.

@@ -758,3 +758,18 @@ def test_advisory_usage_survives_a_rejected_turn_and_is_counted_exactly_once(leg
     assert a1.call_count == 1  # the pass ran on the real first turn only, so it is charged once
     assert primary.call_count == 2  # the rejected turn plus the recovery turn
     assert report.usage == {"model_calls": 2, "input_tokens": 5 + 11, "output_tokens": 7 + 13}
+
+
+def test_primary_failure_preserves_primary_usage_alongside_advisory_usage():
+    """Wrapping a failed primary call must not discard tokens it already reports as spent."""
+    primary = FakeModel(ProviderError("unavailable", "primary failed", usage=Usage(7, 3)))
+    a1 = adviser("fake:a", ModelTurn(text="advice", usage=Usage(2, 1)))
+    config = make_config(["fake:a"], synthesis=False)
+    provider = build(primary, [a1], config)
+
+    with pytest.raises(ProviderError) as raised:
+        provider.complete(FIRST_TURN, (), timeout=20.0, max_output_tokens=400)
+
+    assert raised.value.usage == Usage(input_tokens=9, output_tokens=4)
+    assert raised.value.kind == "unavailable"
+    assert raised.value.message == "primary failed"
