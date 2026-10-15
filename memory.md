@@ -25,8 +25,7 @@
 - Live OpenAI/Groq/Ollama provider behavior and target-Mac voice/hardware behavior have not been verified by these CI runs.
 - No `LICENSE` file has been added. The G0DM0D3 reference is AGPL-3.0; do not copy its source/prompts/scoring tables wholesale or imply the licensing question is resolved. Keep new implementation original and flag distribution/licensing for owner decision.
 - Preserve existing branches and PRs; remote actions require explicit authorization. Report actual GitHub results.
-- Historical documentation branches (`docs/project-foundation-v1`, `docs/ultron-collaborative-assistant-v2`, `docs/ultron-trilingual-desktop-v3`, `docs/student-life-companion-v4`) remain historical context; do not assume any is current or merged without checking.
-- Historical document branches and their contents are listed above; check their current GitHub state before relying on them.
+- Documentation branches (`docs/project-foundation-v1`, `docs/ultron-collaborative-assistant-v2`, `docs/ultron-trilingual-desktop-v3`, `docs/student-life-companion-v4`) are historical context; check current GitHub state before relying on them.
 
 ## 3. Architecture summary
 
@@ -218,7 +217,7 @@ No code, dependency, dataset, personal media, or private repository content was 
 
 - `main` is at `88dabc6cd41a6f71082db9b48aaa2a48e3cfc6a2` after merging PRs #5, #6, and #4 in that order.
 - Latest main CI passed all four supported Python versions (3.10–3.13). This is CI evidence only, not live provider or macOS hardware validation.
-- No open PRs were found in the latest recheck.
+- Before PR #7 was opened, no open PRs were found in the latest recheck.
 - The merged tree now includes the provider-neutral bounded agent loop, central policy/registry, Groq and Ollama adapters, local-only provider guard, bounded model racing, AutoTune, opt-in Smart Router, and opt-in advisory ensemble. Feature descriptions in older sections may predate this integration; use source and current tests as authority.
 
 ### Next milestone recommendation: Phase 7.1 — safe local knowledge and memory continuity
