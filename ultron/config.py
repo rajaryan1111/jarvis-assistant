@@ -232,16 +232,24 @@ _AGENT_MODEL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV
 OPENAI_CLIENT_TIMEOUT = 30.0
 OPENAI_CLIENT_MAX_RETRIES = 1
 
-# Agent-loop model provider (M2.2): ULTRON_PROVIDER=openai|groq.
-SUPPORTED_PROVIDERS = ("openai", "groq")
+# Agent-loop model provider (M2.2/M2.3): ULTRON_PROVIDER=openai|groq|ollama.
+SUPPORTED_PROVIDERS = ("openai", "groq", "ollama")
 DEFAULT_PROVIDER = "openai"
-PROVIDER_KEYS = {"openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY"}
+# "ollama" maps to "": the local server needs no credential and none must be invented.
+PROVIDER_KEYS = {"openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY", "ollama": ""}
 # Production on Groq, self-serve pricing, documented tool use (console.groq.com/docs/models and
 # /docs/tool-use, checked 2026-10-13). No parallel tool calls, which the agent never uses.
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 # Per-call output limit. Groq's default model is a reasoning model whose hidden reasoning
 # counts against max_completion_tokens, so it needs more room than OpenAI's 400.
-DEFAULT_MAX_OUTPUT_TOKENS = {"openai": 400, "groq": 1024}
+DEFAULT_MAX_OUTPUT_TOKENS = {"openai": 400, "groq": 1024, "ollama": 1024}
+# Local Ollama server (M2.3). The model must be pulled locally (``ollama pull``) and must
+# support tool calling; ULTRON_OLLAMA_MODEL overrides the default. Loopback only: a base URL
+# that is not localhost/127.0.0.1/::1 turns the agent off instead of sending prompts (and
+# whatever the conversation contains) to a non-local host.
+DEFAULT_OLLAMA_MODEL = "llama3.1:latest"
+OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+OLLAMA_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _PROVIDER_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_-")
 
 
@@ -273,6 +281,8 @@ class AgentConfig:
     provider_error: str = ""
     model: str = DEFAULT_AGENT_MODEL
     reasoning_effort: str = ""  # Groq only; "" = do not send
+    local_only: bool = False  # ULTRON_LOCAL_ONLY=1: remote agent providers are refused
+    ollama_base_url: str = OLLAMA_BASE_URL  # loopback-validated in load_agent_config
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS[DEFAULT_PROVIDER]
     max_steps: int = 6
     max_tool_calls: int = 8
@@ -308,13 +318,37 @@ def load_agent_config(env: Mapping[str, str] | None = None) -> AgentConfig:
         provider_error = (f"ULTRON_PROVIDER={shown!r} is not supported (use one of: {', '.join(SUPPORTED_PROVIDERS)}); "
                           "the agent loop is off")
         log.warning("%s", provider_error)
+    local_only = _flag(env, "ULTRON_LOCAL_ONLY", default=False)
+    if not provider_error and local_only and provider != "ollama":
+        provider_error = (f"ULTRON_LOCAL_ONLY=1 but ULTRON_PROVIDER={provider!r} is a remote provider; "
+                          "the agent loop is off (set ULTRON_PROVIDER=ollama for a local model server)")
+        log.warning("%s", provider_error)
     reasoning_effort = ""
     if provider == "groq":
         # ULTRON_AGENT_MODEL / ULTRON_CHAT_MODEL name OpenAI models; Groq has its own namespace.
         model = _model_name(env, "ULTRON_GROQ_MODEL", DEFAULT_GROQ_MODEL)
         reasoning_effort = _groq_reasoning_effort(env, model, log)
+    elif provider == "ollama":
+        # Ollama has its own namespace too (``ollama list``); tags like "qwen3:8b" are valid
+        # model names under _AGENT_MODEL_CHARS.
+        model = _model_name(env, "ULTRON_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL)
     else:
         model = _model_name(env, "ULTRON_AGENT_MODEL", load_chat_model(env))
+    ollama_base_url = OLLAMA_BASE_URL
+    if provider == "ollama" and not provider_error:
+        from urllib.parse import urlsplit
+
+        raw_url = (env.get("ULTRON_OLLAMA_BASE_URL") or "").strip()
+        if raw_url:
+            parsed = urlsplit(raw_url)
+            if (parsed.scheme in ("http", "https") and len(raw_url) <= 200
+                    and (parsed.hostname or "") in OLLAMA_LOOPBACK_HOSTS):
+                ollama_base_url = raw_url
+            else:
+                provider_error = ("ULTRON_OLLAMA_BASE_URL must be a loopback http(s) URL (localhost, "
+                                  "127.0.0.1 or [::1]); the agent loop is off rather than sending "
+                                  "prompts to a non-local host")
+                log.warning("%s", provider_error)
     output_default = DEFAULT_MAX_OUTPUT_TOKENS.get(provider, defaults.max_output_tokens)
     return AgentConfig(
         enabled=_flag(env, "ULTRON_AGENT", default=True),
@@ -322,6 +356,8 @@ def load_agent_config(env: Mapping[str, str] | None = None) -> AgentConfig:
         provider_error=provider_error,
         model=model,
         reasoning_effort=reasoning_effort,
+        local_only=local_only,
+        ollama_base_url=ollama_base_url,
         max_output_tokens=int(number("ULTRON_AGENT_MAX_OUTPUT_TOKENS", output_default, 64, 4096, int)),
         max_steps=int(number("ULTRON_AGENT_MAX_STEPS", defaults.max_steps, 1, 20, int)),
         max_tool_calls=int(number("ULTRON_AGENT_MAX_TOOL_CALLS", defaults.max_tool_calls, 1, 30, int)),
@@ -354,7 +390,14 @@ def agent_provider_status(config: AgentConfig, env: Mapping[str, str] | None = N
         return False, config.provider_error
     if not config.enabled:
         return False, "the agent loop is off (ULTRON_AGENT=0)"
-    key = PROVIDER_KEYS[config.provider]
-    if get_credential(key, env) is None:
+    key = PROVIDER_KEYS.get(config.provider, "")
+    if key and get_credential(key, env) is None:
         return False, f"{key} is not set (needed for ULTRON_PROVIDER={config.provider})"
-    return True, f"provider={config.provider} model={config.model}"
+    line = f"provider={config.provider} model={config.model}"
+    if config.provider == "ollama":
+        # The base URL is loopback-validated, never a credential; showing it makes the
+        # local-only property visible in ``ultron doctor``.
+        line += f" (local server {config.ollama_base_url}, no credential)"
+    if config.local_only:
+        line += " [local-only]"
+    return True, line

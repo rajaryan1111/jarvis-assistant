@@ -70,6 +70,17 @@ def test_allowed_hosts_and_origins_are_loopback_only(tmp_path):
     assert all(o.startswith("http://") for o in s.allowed_origins)
 
 
+def test_extra_allowed_hosts_and_origins_from_env(tmp_path):
+    s = load_settings({
+        "ULTRON_DATA_DIR": str(tmp_path),
+        "ULTRON_ALLOWED_HOSTS": "Jarvis.Local:5001, , proxy.internal:8443",
+        "ULTRON_ALLOWED_ORIGINS": "https://Jarvis.Local:8443/, http://proxy.internal:8443",
+    })
+    assert {"jarvis.local:5001", "proxy.internal:8443"} <= s.allowed_hosts
+    assert {"127.0.0.1:5001", "localhost:5001", "[::1]:5001"} <= s.allowed_hosts
+    assert {"https://jarvis.local:8443", "http://proxy.internal:8443"} <= s.allowed_origins
+
+
 @pytest.mark.parametrize("host,expected", [("127.0.0.1", True), ("localhost", True), ("::1", True),
                                            ("0.0.0.0", False), ("192.168.1.5", False), ("example.com", False)])
 def test_is_loopback_host(host, expected):
@@ -320,6 +331,26 @@ def test_redact_masks_query_keys_headers_and_known_values(monkeypatch):
     assert REDACTED in text
     pv = "pv_" + "A" * 24
     assert pv not in redact(f"key={pv}")
+
+
+def test_redact_masks_url_userinfo_passwords():
+    """Remote URLs with embedded credentials must not survive redaction.
+
+    ``https://user:password@host`` is the concrete case: the password shape matches no
+    token prefix and appears in no query parameter, so without a userinfo rule it reaches
+    logs and tool output verbatim - demonstrated with .git/config-style URLs and with any
+    legitimate project file that quotes such a URL.
+    """
+    pw = "Sup3r" + "S3cret" + "Passw0rd"  # assembled fixture, not a real credential
+    out = redact(f"https://bot:{pw}@github.com/example/repo.git")
+    assert pw not in out
+    assert out == f"https://bot:{REDACTED}@github.com/example/repo.git"
+    # Percent-encoded passwords are masked whole; scheme, user and host stay diagnosable.
+    assert redact("https://u:p%40ss@h/x") == f"https://u:{REDACTED}@h/x"
+    # Ordinary URLs, ports and scp-style syntax are untouched.
+    assert redact("https://github.com/example/repo.git") == "https://github.com/example/repo.git"
+    assert redact("https://example.com:8080/path") == "https://example.com:8080/path"
+    assert redact("git@github.com:example/repo.git") == "git@github.com:example/repo.git"
 
 
 def test_redacting_log_filter(caplog):

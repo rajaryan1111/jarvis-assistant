@@ -217,14 +217,42 @@ class GroqChatProvider(OpenAIChatProvider):
         return params
 
 
+# The OpenAI SDK requires a non-empty api_key; Ollama ignores the Authorization header.
+# This constant is not a credential and grants nothing - it never appears in logs as a
+# secret because it is not one.
+OLLAMA_SDK_KEY = "ollama"
+
+
+class OllamaChatProvider(OpenAIChatProvider):
+    """A local Ollama server through its OpenAI-compatible endpoint (M2.3).
+
+    Same SDK, same response parsing, same runtime, registry, policy, confirmation and audit
+    path as the cloud providers; the difference is transport-level: the base URL is loopback
+    (validated in ``ultron.config`` and re-checked in :func:`create_provider`) and there is
+    no credential, so this provider sends nothing off the machine. The chosen local model
+    must support tool calling (``ollama pull`` it first); no sampling or reasoning knobs are
+    sent - only standard chat-completion fields.
+    """
+
+    name = "ollama"
+    label = "Ollama (local)"
+    key_env = "ULTRON_OLLAMA_BASE_URL"  # named in error messages; there is no key to check
+    model_env = "ULTRON_OLLAMA_MODEL"
+
+
 def create_provider(config: Any, *, openai_client: Any = None, groq_api_key: str | None = None,
-                    groq_base_url: str = GROQ_BASE_URL) -> OpenAIChatProvider | None:
+                    groq_base_url: str = GROQ_BASE_URL,
+                    ollama_base_url: str | None = None) -> OpenAIChatProvider | None:
     """The configured agent provider, or None when it cannot be used (unknown provider,
     missing credential). ``config`` is an :class:`ultron.config.AgentConfig`.
 
     The Groq client always gets an explicit ``base_url``: ``OPENAI_BASE_URL`` (meant for the
     OpenAI client) can never redirect the Groq key to another host. ``groq_base_url`` exists
     for the loopback test stub; nothing reads it from the environment.
+
+    The Ollama client gets its base URL from the validated agent config (loopback only, no
+    credential) and refuses non-loopback overrides here too, so neither ``OPENAI_BASE_URL``
+    nor a hand-passed URL can point the agent at a remote host while it believes it is local.
     """
     if getattr(config, "provider_error", ""):
         return None
@@ -240,6 +268,20 @@ def create_provider(config: Any, *, openai_client: Any = None, groq_api_key: str
         client = openai.OpenAI(api_key=groq_api_key, base_url=groq_base_url, timeout=OPENAI_CLIENT_TIMEOUT,
                                max_retries=0)
         return GroqChatProvider(client, config.model, reasoning_effort=config.reasoning_effort)
+    if config.provider == "ollama":
+        from urllib.parse import urlsplit
+
+        import openai
+
+        from ultron.config import OLLAMA_BASE_URL, OLLAMA_LOOPBACK_HOSTS, OPENAI_CLIENT_TIMEOUT
+
+        url = ollama_base_url or getattr(config, "ollama_base_url", "") or OLLAMA_BASE_URL
+        parsed = urlsplit(url)
+        if parsed.scheme not in ("http", "https") or (parsed.hostname or "") not in OLLAMA_LOOPBACK_HOSTS:
+            return None  # defence in depth; load_agent_config already refuses non-loopback URLs
+        client = openai.OpenAI(api_key=OLLAMA_SDK_KEY, base_url=url, timeout=OPENAI_CLIENT_TIMEOUT,
+                               max_retries=0)
+        return OllamaChatProvider(client, config.model)
     return None
 
 

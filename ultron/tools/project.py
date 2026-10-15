@@ -10,6 +10,9 @@ Security invariants:
 * Never reads ``.env*``, tokens, credentials, private keys, databases, or other sensitive
   files (:func:`is_sensitive_path`); sensitive files are rejected or recorded only as
   skipped paths.
+* Directly targeting a directory the walks ignore (``IGNORED_DIRS``: VCS metadata such as
+  ``.git``, virtual environments, caches, build output) is refused with reason ``ignored``,
+  so a ``path`` argument cannot bypass the walk policy.
 * Bounds directory walk depth, total files scanned, total bytes read, per-file byte size,
   AST recursion, excerpt length, result count, and wall-clock duration.
 * Queries Git status via :func:`ultron.tools.process.run_command` with an absolute
@@ -311,6 +314,18 @@ def _resolve_tool_target(
     rel = "." if target == canonical_root else str(target.relative_to(canonical_root))
     if rel != "." and is_sensitive_path(rel):
         return None, "sensitive", "sensitive path is not permitted"
+    if rel != ".":
+        # The structure/search walks never descend into IGNORED_DIRS, and a direct ``path``
+        # argument must not bypass that policy. VCS metadata is the security-critical case:
+        # .git/config can hold remote URLs with embedded credentials whose password shape
+        # redact() does not pattern-match, and .git/logs or COMMIT_EDITMSG expose operation
+        # history; none of those names trip the sensitive-name filter above.
+        for part in Path(rel).parts:
+            if part in IGNORED_DIRS or part.lower() in IGNORED_DIRS:
+                return None, "ignored", (
+                    "path is inside a directory the project tools ignore "
+                    "(VCS metadata, virtual environments, caches or build output)"
+                )
     return target, None, None
 
 

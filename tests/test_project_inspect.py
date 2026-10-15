@@ -588,3 +588,33 @@ def test_inspect_rejects_sensitive_targets_and_skips_sensitive_directories(tmp_p
     for sdir in (".ssh", ".aws", ".gnupg", ".kube"):
         assert skipped[sdir] == "sensitive"
     assert "SECRET_DIR_CONTENT" not in str(scan.data)
+
+
+# ============================================================ 12. ignored directories cannot be targeted directly
+def test_inspect_refuses_direct_targeting_of_ignored_directories(tmp_path):
+    """``path`` must honour the same IGNORED_DIRS policy the structure walk applies."""
+    repo = tmp_path / "sample_repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("# demo\n", encoding="utf-8")
+    fake_secret = "Sup3r" + "S3cret" + "Passw0rd"  # assembled; not a real credential
+    (repo / ".git").mkdir()
+    (repo / ".git" / "config").write_text(
+        f'[remote "origin"]\n\turl = https://bot:{fake_secret}@github.com/example/repo.git\n',
+        encoding="utf-8",
+    )
+    (repo / "node_modules").mkdir()
+    (repo / "node_modules" / "left-pad.js").write_text("module.exports = 1;\n", encoding="utf-8")
+
+    tool = ProjectInspectTool(root=repo, runner=FakeRunner())
+    for path in (".git", ".git/config", "node_modules"):
+        res = tool.run({"path": path})
+        assert res.ok is False, path
+        assert res.data["reason"] == "ignored", (path, res.data["reason"])
+        assert fake_secret not in str(res.data)
+
+    # Inspecting the project root still works and the walk keeps skipping ignored directories.
+    scan = tool.run({})
+    assert scan.ok is True
+    assert ".git" not in scan.data["structure"]["directories"]
+    assert "node_modules" not in scan.data["structure"]["directories"]
+    assert fake_secret not in str(scan.data)

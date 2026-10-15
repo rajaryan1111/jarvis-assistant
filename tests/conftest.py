@@ -16,6 +16,8 @@ import pytest
 
 _SANDBOX = Path(tempfile.mkdtemp(prefix="ultron-tests-"))
 os.environ["ULTRON_SKIP_DOTENV"] = "1"
+# Tests never write to the owner's chat transcript; history tests opt in explicitly.
+os.environ["ULTRON_HISTORY"] = "0"
 os.environ["ULTRON_DATA_DIR"] = str(_SANDBOX / "data")
 os.environ["ULTRON_MEMORY_FILE"] = str(_SANDBOX / "memory.json")
 os.environ["ULTRON_KNOWLEDGE_DIR"] = str(_SANDBOX / "knowledge_docs")
@@ -30,7 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # are scrubbed below. Capture them first, only when explicitly opted in, and hand them to the
 # live tests through the ``live_env`` fixture (never through os.environ, so every other test
 # in the same session still runs without credentials).
-LIVE_OPT_INS = {"ULTRON_LIVE_OPENAI": "openai", "ULTRON_LIVE_GROQ": "groq"}
+LIVE_OPT_INS = {"ULTRON_LIVE_OPENAI": "openai", "ULTRON_LIVE_GROQ": "groq", "ULTRON_LIVE_OLLAMA": "ollama"}
 
 
 def capture_live_env(environ, dotenv_path: Path) -> dict[str, str]:
@@ -54,6 +56,11 @@ for _name in (
     "ULTRON_ALLOW_NON_LOOPBACK", "ULTRON_ALLOWED_HOSTS", "ULTRON_ALLOWED_ORIGINS",
     "OPENAI_API_KEY", "WEATHER_API_KEY", "NEWS_API_KEY", "CRICKET_API_KEY", "PICOVOICE_ACCESS_KEY",
     "GROQ_API_KEY", "OPENAI_BASE_URL", "ULTRON_PROVIDER", "ULTRON_GROQ_MODEL", "ULTRON_GROQ_REASONING_EFFORT",
+    "ULTRON_OLLAMA_MODEL", "ULTRON_OLLAMA_BASE_URL", "ULTRON_LOCAL_ONLY",
+    "ULTRON_RACE_MODELS", "ULTRON_RACE_MAX_MODELS", "ULTRON_RACE_DEADLINE", "ULTRON_RACE_TIMEOUT",
+    "ULTRON_AUTOTUNE", "ULTRON_AUTOTUNE_BUDGET", "ULTRON_AUTOTUNE_TASK_DEADLINE",
+    "ULTRON_AUTOTUNE_TASK_TIMEOUT", "ULTRON_AUTOTUNE_MIN_PASS",
+    "ULTRON_ROUTER", "ULTRON_ROUTER_MIN_PASS", "ULTRON_ROUTER_MAX_AGE_DAYS",
     "ULTRON_AGENT", "ULTRON_AGENT_MODEL", "ULTRON_CHAT_MODEL", "ULTRON_AGENT_MAX_OUTPUT_TOKENS",
 ):
     os.environ.pop(_name, None)

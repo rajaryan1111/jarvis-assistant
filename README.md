@@ -81,10 +81,13 @@ echo "ULTRON_HAND_LANDMARKER_MODEL=$PWD/models/hand_landmarker.task" >> .env
    must support Chat Completions function calling). `uv run ultron doctor` shows both. Without a key,
    everything except the language-model features keeps working.
 
-   **Agent provider:** `ULTRON_PROVIDER=openai` (default) or `groq`. With `groq`, the agent loop uses
-   `GROQ_API_KEY` and `ULTRON_GROQ_MODEL` (default `openai/gpt-oss-120b`). Single-shot chat, study plans and
+   **Agent provider:** `ULTRON_PROVIDER=openai` (default), `groq` or `ollama`. With `groq`, the agent loop uses
+   `GROQ_API_KEY` and `ULTRON_GROQ_MODEL` (default `openai/gpt-oss-120b`). With `ollama`, the agent loop talks to a
+   **local** Ollama server (`ULTRON_OLLAMA_MODEL`, default `llama3.1:latest`; loopback base URL only, no key) and
+   `ULTRON_LOCAL_ONLY=1` refuses remote agent providers outright. Single-shot chat, study plans and
    knowledge answers stay on OpenAI. Any other value turns the agent off instead of falling back. See
-   [docs/M2_2_GROQ_PROVIDER.md](docs/M2_2_GROQ_PROVIDER.md).
+   [docs/M2_2_GROQ_PROVIDER.md](docs/M2_2_GROQ_PROVIDER.md) and
+   [docs/M2_3_LOCAL_PROVIDER.md](docs/M2_3_LOCAL_PROVIDER.md).
 
 2. **Local API token (required for the HUD).** This token authorises control of your computer through the
    local server. It is generated locally and stored **outside the repository** in a file only you can read:
@@ -132,7 +135,8 @@ answers. Details: [voice trust model](docs/M1_2_IDENTITY_SESSIONS_VOICE.md#5-voi
 
 ### Multi-step requests (agent loop)
 
-With a model configured (`OPENAI_API_KEY`, or `ULTRON_PROVIDER=groq` with `GROQ_API_KEY`), a request the
+With a model configured (`OPENAI_API_KEY`, `ULTRON_PROVIDER=groq` with `GROQ_API_KEY`, or `ULTRON_PROVIDER=ollama`
+with a local Ollama server — no key), a request the
 keyword router does not recognise goes to a small agent loop.
 Start a request with `agent:` to force it. From a terminal: `uv run ultron agent "what time is it and how is
 my battery?" --steps`. The model can only *propose* calls to an allowlisted set of read-only and routine
@@ -142,7 +146,34 @@ the recorded tool results support it. After reading web, news, weather or Wikipe
 that run needs your approval in the HUD. Settings (`ULTRON_AGENT_*`) and limitations:
 [docs/M2_0_AGENT_LOOP.md](docs/M2_0_AGENT_LOOP.md).
 
-**What goes to the model provider (OpenAI or Groq):** your request text and the results of the tools used in that run. That can include
+**Compare several models (opt-in):** `uv run ultron race "your question"` asks the configured providers the
+same question in parallel — bounded (max 4 models, one overall deadline, per-model timeout, character caps),
+advisory-only (no tools, nothing executed) and honest about disagreement: agreement between models is never
+treated as verification, contradictions stay unresolved, and an optional single judge call can weigh the
+answers against evidence **you** provide (`--evidence FILE`). `ULTRON_LOCAL_ONLY=1` is enforced: a requested
+cloud racer refuses the whole race. Limits, privacy boundaries and synthesis rules:
+[docs/M2_4_MODEL_RACING.md](docs/M2_4_MODEL_RACING.md).
+
+**Pick the right model per task (opt-in):** `uv run ultron autotune run` benchmarks your configured model
+profiles on a small fixed suite of synthetic tasks (coding, reasoning, summarisation) — objective checks only
+(exact answers, strict JSON, static code-shape regexes, length/fact constraints, latency); model output is
+**never executed** and no answer "quality" is claimed. `uv run ultron autotune route coding` then recommends a
+profile with the rule and every reason printed, and `--spec` composes straight into `race --models`. Results
+persist to one redacted `0600` file in the data directory; nothing is reconfigured automatically, and
+`ULTRON_LOCAL_ONLY=1` is enforced with zero cloud clients constructed. Methodology, bounds and limitations:
+[docs/M2_5_AUTOTUNE.md](docs/M2_5_AUTOTUNE.md).
+
+**Let the agent loop pick the model per task (opt-in):** set `ULTRON_ROUTER=1` and the Smart Router sends each
+agent-loop request to the profile AutoTune measured as fastest-eligible for that task category — classified by a
+fixed published rule table, validated against the stored results' suite fingerprint and age, with the winner
+re-checked as buildable right now. Every decision prints its full explanation (`uv run ultron router "fix my
+python bug"`, `ultron router --status`, `ultron agent --steps`), and anything disabled, unmatched, missing,
+stale, ineligible, refused or unbuildable falls back to the configured `ULTRON_PROVIDER` unchanged.
+`ULTRON_LOCAL_ONLY=1` holds across routing and every fallback path; routing never reconfigures anything and
+grants no new tool authority. Details and limitations:
+[docs/M2_6_SMART_ROUTER.md](docs/M2_6_SMART_ROUTER.md).
+
+**What goes to the model provider (OpenAI, Groq or a local Ollama server):** your request text and the results of the tools used in that run. That can include
 your notes or reminders if the model lists them, plus weather, news and system status. It never includes
 keys, tokens, cookies, files, screenshots, audio or past conversations. A typical request is 2–4 model calls
 (roughly 4–10k tokens), and every run stops at 30k tokens. Details, costs and troubleshooting:
@@ -154,7 +185,9 @@ The assistant can control this computer, so the server is built to fail closed:
 
 - **Loopback only.** It binds to `127.0.0.1`. Other addresses are refused unless you set
   `ULTRON_ALLOW_NON_LOOPBACK=1` (not recommended: traffic is plain HTTP). Debug mode is off by default and is
-  never allowed on a non-loopback address.
+  never allowed on a non-loopback address. `Host` and `Origin` headers are checked against the loopback
+  allowlist (`ULTRON_ALLOWED_HOSTS` and `ULTRON_ALLOWED_ORIGINS` add comma-separated entries when behind a
+  local proxy).
 - **Authentication on every sensitive endpoint.** `/status`, `/ask`, `/speak`, `/confirm`, `/cancel`,
   `/pending` and `/logout` require either `Authorization: Bearer <token>` (wake-word and other clients) or the
   HUD session cookie. If no token is configured, these endpoints return `503`, and the login page explains the
@@ -242,9 +275,9 @@ See the M1 report for what was verified where.
 | "rejected the configured credentials" | Wrong or revoked key (the message names `OPENAI_API_KEY` or `GROQ_API_KEY`): fix it in `.env` and restart |
 | "rate limited" / "no remaining quota" | Wait a minute / check billing in the OpenAI or Groq console |
 | "The language model is unavailable right now" | No network, proxy/firewall, or a provider outage |
-| "rejected the request (check ULTRON_AGENT_MODEL …)" | The model doesn't exist or can't do tool calls: use a tool-calling chat model (`ULTRON_GROQ_MODEL` on Groq) |
+| "rejected the request (check ULTRON_AGENT_MODEL …)" | The model doesn't exist or can't do tool calls: use a tool-calling chat model (`ULTRON_GROQ_MODEL` on Groq, `ULTRON_OLLAMA_MODEL` on Ollama — `ollama pull` it first) |
 | "ran out of output tokens before answering" | A reasoning model used the whole limit: raise `ULTRON_AGENT_MAX_OUTPUT_TOKENS` |
-| `doctor`: "ULTRON_PROVIDER='…' is not supported" | Use `openai` or `groq` |
+| `doctor`: "ULTRON_PROVIDER='…' is not supported" | Use `openai`, `groq` or `ollama` |
 | A feature says its key is missing | Add it to `.env`. Run `uv run ultron doctor` to see which keys are set |
 
 ## Repository structure

@@ -20,6 +20,7 @@ from openai import OpenAI
 import vision  # optional vision utilities; degrade gracefully when OpenCV/MediaPipe are missing
 import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
 import news
+from ultron.agent import router as smart_router
 from ultron.agent.provider import create_provider
 from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
 from ultron.config import (
@@ -30,6 +31,7 @@ from ultron.config import (
     load_chat_model,
     load_dotenv_if_enabled,
 )
+from ultron.history import recent as chat_history_recent, record_exchange as chat_history_record
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
@@ -1731,6 +1733,10 @@ _AGENT_PREFIX_RE = re.compile(r"^\s*agent\s*[:,]?\s+(?P<objective>\S.*)$", re.IG
 _GROQ_PROVIDER = (create_provider(AGENT_CONFIG, groq_api_key=GROQ_API_KEY)
                   if AGENT_CONFIG.provider == "groq" and not AGENT_CONFIG.provider_error else None)
 
+# ULTRON_PROVIDER=ollama: one client for the local model server (loopback base URL, no credential).
+_OLLAMA_PROVIDER = (create_provider(AGENT_CONFIG)
+                    if AGENT_CONFIG.provider == "ollama" and not AGENT_CONFIG.provider_error else None)
+
 
 def agent_provider():
     """The model behind the agent loop (ULTRON_PROVIDER), or None when it is not configured."""
@@ -1738,6 +1744,8 @@ def agent_provider():
         return None
     if AGENT_CONFIG.provider == "groq":
         return _GROQ_PROVIDER
+    if AGENT_CONFIG.provider == "ollama":
+        return _OLLAMA_PROVIDER
     return create_provider(AGENT_CONFIG, openai_client=client)
 
 
@@ -1754,11 +1762,28 @@ def build_agent(provider=None) -> AgentRuntime:
 
 
 def run_agent(objective: str, ctx: CommandContext = None) -> str:
-    """Run the agent loop for ``objective`` as ``ctx``; the full report goes to ctx.events."""
+    """Run the agent loop for ``objective`` as ``ctx``; the full report goes to ctx.events.
+
+    With the opt-in Smart Router enabled (``ULTRON_ROUTER=1``; docs/M2_6_SMART_ROUTER.md)
+    the provider is chosen per request from validated AutoTune results, and the full
+    decision (classification rule, results validation, routing rule rationale, fallback
+    reason) is appended to ``ctx.events`` as ``("router_decision", ...)``. Router off -
+    the default - or any missing/stale/ineligible/refused case keeps the existing
+    ``agent_provider()`` path byte-for-byte. Routing only selects among owner-configured
+    providers; the chosen model runs the same runtime, registry, policy, confirmation and
+    audit path under the same bounds, and ULTRON_LOCAL_ONLY is enforced in the router and
+    in every fallback (load_agent_config gates the default path itself).
+    """
     ctx = ctx or CommandContext.untrusted("direct-call")
     if not AGENT_CONFIG.enabled:
         return "The agent loop is turned off (ULTRON_AGENT=0)."
-    report = build_agent().run(objective, ctx)
+    provider = agent_provider()
+    if smart_router.router_enabled(os.environ):
+        decision = smart_router.route_request(objective, os.environ)
+        ctx.events.append(("router_decision", decision))
+        if decision.provider is not None:
+            provider = decision.provider
+    report = build_agent(provider).run(objective, ctx)
     ctx.events.append(("agent_report", report))
     return report.reply
 
@@ -2123,8 +2148,12 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     # plain questions); without a configured model, or with ULTRON_AGENT=0, to the chat reply.
     if agent_available():
         return run_agent(raw, ctx)
-    history = []  # simple history for now
-    return ask_gpt(cmd, history)
+    # Bounded, redacted local transcript (docs/CONVERSATION_HISTORY.md): the single-shot chat
+    # sees the last few turns instead of starting cold. The agent loop keeps its own audit
+    # ledger and is deliberately not fed from here. ULTRON_HISTORY=0 disables both sides.
+    reply = ask_gpt(cmd, chat_history_recent())
+    chat_history_record(cmd, reply)
+    return reply
 
 
 # ================== OPTIONAL CLI LOOP ==================
