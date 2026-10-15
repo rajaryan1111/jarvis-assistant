@@ -20,6 +20,7 @@ from openai import OpenAI
 import vision  # optional vision utilities; degrade gracefully when OpenCV/MediaPipe are missing
 import knowledge  # Personal Knowledge Base (RAG over notes/PDFs); optional heavy deps load lazily
 import news
+from ultron.agent import router as smart_router
 from ultron.agent.provider import create_provider
 from ultron.agent.runtime import AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
 from ultron.config import (
@@ -1761,11 +1762,28 @@ def build_agent(provider=None) -> AgentRuntime:
 
 
 def run_agent(objective: str, ctx: CommandContext = None) -> str:
-    """Run the agent loop for ``objective`` as ``ctx``; the full report goes to ctx.events."""
+    """Run the agent loop for ``objective`` as ``ctx``; the full report goes to ctx.events.
+
+    With the opt-in Smart Router enabled (``ULTRON_ROUTER=1``; docs/M2_6_SMART_ROUTER.md)
+    the provider is chosen per request from validated AutoTune results, and the full
+    decision (classification rule, results validation, routing rule rationale, fallback
+    reason) is appended to ``ctx.events`` as ``("router_decision", ...)``. Router off -
+    the default - or any missing/stale/ineligible/refused case keeps the existing
+    ``agent_provider()`` path byte-for-byte. Routing only selects among owner-configured
+    providers; the chosen model runs the same runtime, registry, policy, confirmation and
+    audit path under the same bounds, and ULTRON_LOCAL_ONLY is enforced in the router and
+    in every fallback (load_agent_config gates the default path itself).
+    """
     ctx = ctx or CommandContext.untrusted("direct-call")
     if not AGENT_CONFIG.enabled:
         return "The agent loop is turned off (ULTRON_AGENT=0)."
-    report = build_agent().run(objective, ctx)
+    provider = agent_provider()
+    if smart_router.router_enabled(os.environ):
+        decision = smart_router.route_request(objective, os.environ)
+        ctx.events.append(("router_decision", decision))
+        if decision.provider is not None:
+            provider = decision.provider
+    report = build_agent(provider).run(objective, ctx)
     ctx.events.append(("agent_report", report))
     return report.reply
 

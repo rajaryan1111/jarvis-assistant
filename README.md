@@ -163,6 +163,16 @@ persist to one redacted `0600` file in the data directory; nothing is reconfigur
 `ULTRON_LOCAL_ONLY=1` is enforced with zero cloud clients constructed. Methodology, bounds and limitations:
 [docs/M2_5_AUTOTUNE.md](docs/M2_5_AUTOTUNE.md).
 
+**Let the agent loop pick the model per task (opt-in):** set `ULTRON_ROUTER=1` and the Smart Router sends each
+agent-loop request to the profile AutoTune measured as fastest-eligible for that task category — classified by a
+fixed published rule table, validated against the stored results' suite fingerprint and age, with the winner
+re-checked as buildable right now. Every decision prints its full explanation (`uv run ultron router "fix my
+python bug"`, `ultron router --status`, `ultron agent --steps`), and anything disabled, unmatched, missing,
+stale, ineligible, refused or unbuildable falls back to the configured `ULTRON_PROVIDER` unchanged.
+`ULTRON_LOCAL_ONLY=1` holds across routing and every fallback path; routing never reconfigures anything and
+grants no new tool authority. Details and limitations:
+[docs/M2_6_SMART_ROUTER.md](docs/M2_6_SMART_ROUTER.md).
+
 **What goes to the model provider (OpenAI, Groq or a local Ollama server):** your request text and the results of the tools used in that run. That can include
 your notes or reminders if the model lists them, plus weather, news and system status. It never includes
 keys, tokens, cookies, files, screenshots, audio or past conversations. A typical request is 2–4 model calls

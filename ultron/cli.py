@@ -29,6 +29,10 @@ Commands
   autotune route <category>  recommend a profile for coding/reasoning/summarisation from the
                    stored results, with the rule and every reason printed (advisory only)
   autotune show|clear        inspect or delete the stored tuning results
+  router "<request text>"    explain, with every rule and reason printed, which configured
+                   profile the opt-in Smart Router would send this request to (dry run:
+                   nothing is sent; ULTRON_ROUTER=1 enables it for the agent loop)
+  router --status  show the router configuration and validation state of the stored results
 """
 
 from __future__ import annotations
@@ -291,6 +295,9 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
         print(f"[--]   agent loop off: {reason}")
     print(f"[--]   models: chat={load_chat_model()} (OpenAI) agent={agent.model} ({agent.provider}); "
           f"live checks: docs/M2_1_REAL_MODEL_VALIDATION.md, docs/M2_2_GROQ_PROVIDER.md")
+    from ultron.agent import router as smart_router
+    print(f"[{'ok' if smart_router.router_enabled(os.environ) else '--'}]   "
+          f"smart router: {smart_router.config_summary(os.environ)}")
 
     print("Optional features:")
     for label, modules, extra in (
@@ -391,6 +398,10 @@ def _cmd_agent(args: argparse.Namespace) -> int:
             ("stop", report.stop_reason),
         ) if v]
         print(f"  [{', '.join(details)}]", file=sys.stderr)
+    decision = next((value for kind, value in reversed(ctx.events) if kind == "router_decision"), None)
+    if decision is not None and args.steps:
+        for line in decision.explanation:
+            print(f"  [router] {line}")
     if report is not None and args.steps:
         for step in report.steps:
             print(f"  {step.call_id} {step.tool}: {step.status} - {step.message}")
@@ -478,6 +489,21 @@ def build_parser() -> argparse.ArgumentParser:
                       help="with 'route': print only the winning spec (composes with `race --models`)")
     tune.add_argument("--json", action="store_true", help="print machine-readable output")
     tune.set_defaults(func=_cmd_autotune)
+    rtr = sub.add_parser("router", help="smart router (opt-in): explain which configured profile "
+                                        "would handle a request, from validated AutoTune results "
+                                        "(docs/M2_6_SMART_ROUTER.md)",
+                         description="Dry-run explanation of the opt-in Smart Router: classifies "
+                                     "the request text with the published rule table, validates "
+                                     "the stored AutoTune results (suite fingerprint and age), "
+                                     "applies autotune's routing rule and checks the winner is "
+                                     "buildable - printing every step. No model call is made and "
+                                     "nothing is sent. ULTRON_ROUTER=1 enables routing for the "
+                                     "agent loop itself.")
+    rtr.add_argument("text", nargs="*", metavar="TEXT",
+                     help="the request text to explain (all remaining words are joined)")
+    rtr.add_argument("--status", action="store_true",
+                     help="show configuration, results validation and per-category winners")
+    rtr.set_defaults(func=_cmd_router)
     return parser
 
 
@@ -642,6 +668,25 @@ def _cmd_autotune(args: argparse.Namespace) -> int:
     answered = any(o.status in ("passed", "failed") for profile in report.profiles
                    for o in profile.tasks)
     return 0 if answered else 1
+
+
+def _cmd_router(args: argparse.Namespace) -> int:
+    from ultron.agent import router as smart_router
+    env = dict(os.environ)
+    if args.status or not args.text:
+        for line in smart_router.status_lines(env):
+            print(line)
+        return 0
+    decision = smart_router.route_request(" ".join(args.text), env)
+    for line in decision.explanation:
+        print(f"[router] {line}")
+    if decision.routed:
+        print(f"[router] would route to {decision.winner} (dry run: the provider client was "
+              "constructed to prove usability but no model call was made and nothing was sent)")
+        return 0
+    print(f"[router] would keep the default provider path ({decision.fallback_reason})",
+          file=sys.stderr)
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
