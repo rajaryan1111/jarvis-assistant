@@ -328,15 +328,22 @@ class EnsembleProvider:
             try:
                 outcomes.append(future.result(timeout=remaining))
             except FutureTimeoutError:
-                # Bounded: this call never waits past the advisory budget. The worker keeps its
-                # slot until its own HTTP timeout returns, honouring capacity accounting.
+                # Cancel work that has not started: otherwise a queued adviser could begin after
+                # this request's deadline and spend tokens after the caller has moved on. If it is
+                # already running, cancellation is best-effort and _ask_one checks the deadline too.
+                future.cancel()
                 outcomes.append(_Outcome(adviser.spec, "timeout", detail="no answer within the advisory budget"))
             except Exception as exc:  # noqa: BLE001 - an adviser must never break the run
                 outcomes.append(_Outcome(adviser.spec, "failed", detail=type(exc).__name__))
         return outcomes
 
     def _ask_one(self, adviser: Adviser, objective: str, deadline: float) -> _Outcome:
-        budget = min(self.config.adviser_timeout, max(deadline - self._clock(), 0.1))
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            # A queued worker may only start after _ask_all has timed out. Never start a paid
+            # provider call after the advisory phase's deadline.
+            return _Outcome(adviser.spec, "timeout", detail="advisory deadline elapsed before start")
+        budget = min(self.config.adviser_timeout, remaining)
         messages = [Message("system", ADVISER_SYSTEM_PROMPT), Message("user", objective)]
         try:
             # tools=() : an adviser is never shown the tool catalog and can never propose a call.

@@ -773,3 +773,30 @@ def test_primary_failure_preserves_primary_usage_alongside_advisory_usage():
     assert raised.value.usage == Usage(input_tokens=9, output_tokens=4)
     assert raised.value.kind == "unavailable"
     assert raised.value.message == "primary failed"
+
+
+def test_queued_adviser_is_not_called_after_the_advisory_deadline(fast_budget):
+    """A saturated pool must not launch a paid adviser call after its request timed out."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    release_worker = Event()
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-queued-adviser")
+    blocker = executor.submit(release_worker.wait)
+    primary = FakeModel(ModelTurn(text="single-model fallback"))
+    a1 = adviser("fake:a", ModelTurn(text="late answer"))
+    config = make_config(["fake:a"], total_seconds=0.05, synthesis=False)
+    provider = EnsembleProvider(primary, [a1], config, executor=executor)
+
+    try:
+        provider.complete(FIRST_TURN, (), timeout=1.0, max_output_tokens=400)
+        # The worker was occupied until the advisory deadline; the queued adviser must be
+        # cancelled or observe the expired deadline rather than call its provider.
+        release_worker.set()
+        blocker.result(timeout=1.0)
+        assert a1.call_count == 0
+        assert primary.call_count == 1
+        assert "AUXILIARY ANALYSIS" not in primary.system_contents()
+    finally:
+        release_worker.set()
+        executor.shutdown(wait=True, cancel_futures=True)
