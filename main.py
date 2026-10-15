@@ -1731,6 +1731,10 @@ _AGENT_PREFIX_RE = re.compile(r"^\s*agent\s*[:,]?\s+(?P<objective>\S.*)$", re.IG
 _GROQ_PROVIDER = (create_provider(AGENT_CONFIG, groq_api_key=GROQ_API_KEY)
                   if AGENT_CONFIG.provider == "groq" and not AGENT_CONFIG.provider_error else None)
 
+# ULTRON_PROVIDER=ollama: one client for the local model server (loopback base URL, no credential).
+_OLLAMA_PROVIDER = (create_provider(AGENT_CONFIG)
+                    if AGENT_CONFIG.provider == "ollama" and not AGENT_CONFIG.provider_error else None)
+
 
 def agent_provider():
     """The model behind the agent loop (ULTRON_PROVIDER), or None when it is not configured."""
@@ -1738,6 +1742,8 @@ def agent_provider():
         return None
     if AGENT_CONFIG.provider == "groq":
         return _GROQ_PROVIDER
+    if AGENT_CONFIG.provider == "ollama":
+        return _OLLAMA_PROVIDER
     return create_provider(AGENT_CONFIG, openai_client=client)
 
 

@@ -81,10 +81,13 @@ echo "ULTRON_HAND_LANDMARKER_MODEL=$PWD/models/hand_landmarker.task" >> .env
    must support Chat Completions function calling). `uv run ultron doctor` shows both. Without a key,
    everything except the language-model features keeps working.
 
-   **Agent provider:** `ULTRON_PROVIDER=openai` (default) or `groq`. With `groq`, the agent loop uses
-   `GROQ_API_KEY` and `ULTRON_GROQ_MODEL` (default `openai/gpt-oss-120b`). Single-shot chat, study plans and
+   **Agent provider:** `ULTRON_PROVIDER=openai` (default), `groq` or `ollama`. With `groq`, the agent loop uses
+   `GROQ_API_KEY` and `ULTRON_GROQ_MODEL` (default `openai/gpt-oss-120b`). With `ollama`, the agent loop talks to a
+   **local** Ollama server (`ULTRON_OLLAMA_MODEL`, default `llama3.1:latest`; loopback base URL only, no key) and
+   `ULTRON_LOCAL_ONLY=1` refuses remote agent providers outright. Single-shot chat, study plans and
    knowledge answers stay on OpenAI. Any other value turns the agent off instead of falling back. See
-   [docs/M2_2_GROQ_PROVIDER.md](docs/M2_2_GROQ_PROVIDER.md).
+   [docs/M2_2_GROQ_PROVIDER.md](docs/M2_2_GROQ_PROVIDER.md) and
+   [docs/M2_3_LOCAL_PROVIDER.md](docs/M2_3_LOCAL_PROVIDER.md).
 
 2. **Local API token (required for the HUD).** This token authorises control of your computer through the
    local server. It is generated locally and stored **outside the repository** in a file only you can read:
@@ -132,7 +135,8 @@ answers. Details: [voice trust model](docs/M1_2_IDENTITY_SESSIONS_VOICE.md#5-voi
 
 ### Multi-step requests (agent loop)
 
-With a model configured (`OPENAI_API_KEY`, or `ULTRON_PROVIDER=groq` with `GROQ_API_KEY`), a request the
+With a model configured (`OPENAI_API_KEY`, `ULTRON_PROVIDER=groq` with `GROQ_API_KEY`, or `ULTRON_PROVIDER=ollama`
+with a local Ollama server — no key), a request the
 keyword router does not recognise goes to a small agent loop.
 Start a request with `agent:` to force it. From a terminal: `uv run ultron agent "what time is it and how is
 my battery?" --steps`. The model can only *propose* calls to an allowlisted set of read-only and routine
@@ -242,9 +246,9 @@ See the M1 report for what was verified where.
 | "rejected the configured credentials" | Wrong or revoked key (the message names `OPENAI_API_KEY` or `GROQ_API_KEY`): fix it in `.env` and restart |
 | "rate limited" / "no remaining quota" | Wait a minute / check billing in the OpenAI or Groq console |
 | "The language model is unavailable right now" | No network, proxy/firewall, or a provider outage |
-| "rejected the request (check ULTRON_AGENT_MODEL …)" | The model doesn't exist or can't do tool calls: use a tool-calling chat model (`ULTRON_GROQ_MODEL` on Groq) |
+| "rejected the request (check ULTRON_AGENT_MODEL …)" | The model doesn't exist or can't do tool calls: use a tool-calling chat model (`ULTRON_GROQ_MODEL` on Groq, `ULTRON_OLLAMA_MODEL` on Ollama — `ollama pull` it first) |
 | "ran out of output tokens before answering" | A reasoning model used the whole limit: raise `ULTRON_AGENT_MAX_OUTPUT_TOKENS` |
-| `doctor`: "ULTRON_PROVIDER='…' is not supported" | Use `openai` or `groq` |
+| `doctor`: "ULTRON_PROVIDER='…' is not supported" | Use `openai`, `groq` or `ollama` |
 | A feature says its key is missing | Add it to `.env`. Run `uv run ultron doctor` to see which keys are set |
 
 ## Repository structure
