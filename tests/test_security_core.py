@@ -322,6 +322,26 @@ def test_redact_masks_query_keys_headers_and_known_values(monkeypatch):
     assert pv not in redact(f"key={pv}")
 
 
+def test_redact_masks_url_userinfo_passwords():
+    """Remote URLs with embedded credentials must not survive redaction.
+
+    ``https://user:password@host`` is the concrete case: the password shape matches no
+    token prefix and appears in no query parameter, so without a userinfo rule it reaches
+    logs and tool output verbatim - demonstrated with .git/config-style URLs and with any
+    legitimate project file that quotes such a URL.
+    """
+    pw = "Sup3r" + "S3cret" + "Passw0rd"  # assembled fixture, not a real credential
+    out = redact(f"https://bot:{pw}@github.com/example/repo.git")
+    assert pw not in out
+    assert out == f"https://bot:{REDACTED}@github.com/example/repo.git"
+    # Percent-encoded passwords are masked whole; scheme, user and host stay diagnosable.
+    assert redact("https://u:p%40ss@h/x") == f"https://u:{REDACTED}@h/x"
+    # Ordinary URLs, ports and scp-style syntax are untouched.
+    assert redact("https://github.com/example/repo.git") == "https://github.com/example/repo.git"
+    assert redact("https://example.com:8080/path") == "https://example.com:8080/path"
+    assert redact("git@github.com:example/repo.git") == "git@github.com:example/repo.git"
+
+
 def test_redacting_log_filter(caplog):
     token = generate_token()
     logger = logging.getLogger("ultron.test.redact")

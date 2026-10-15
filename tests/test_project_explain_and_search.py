@@ -669,3 +669,27 @@ def test_explain_and_search_refuse_direct_targeting_of_ignored_directories(tmp_p
     assert fake_secret not in str(full_scan.data["matches"]) + str(full_scan.data["skipped"])
     # Normal project files keep working.
     assert explain.run({"path": "main.py"}).ok is True
+
+
+# ============================================================ 16. URL userinfo credentials in file content are redacted
+def test_explain_and_search_redact_url_userinfo_credentials_in_legit_files(tmp_path):
+    """A legitimate project file may quote a credentialed remote URL; tool output must not carry the password.
+
+    The resolver blocks ignored directories, but any allowed file (docs, scripts, CI configs)
+    can quote ``https://user:password@host``; the explain/search pipelines pass content
+    through ``redact()``, which must mask the userinfo password.
+    """
+    repo = _seed_sample_repo(tmp_path / "repo")
+    pw = "Sup3r" + "S3cret" + "Passw0rd"  # assembled fixture, not a real credential
+    (repo / "DEPLOY.md").write_text(
+        f"# Deploy\n\nClone:\nhttps://bot:{pw}@github.com/example/repo.git\n", encoding="utf-8"
+    )
+
+    explained = ProjectExplainTool(root=repo).run({"path": "DEPLOY.md"})
+    assert explained.ok is True
+    assert pw not in str(explained.data) + str(explained.message)
+    assert "[REDACTED]" in str(explained.data)
+
+    found = ProjectSearchTool(root=repo).run({"query": "Clone"})
+    assert found.ok is True
+    assert pw not in str(found.data)

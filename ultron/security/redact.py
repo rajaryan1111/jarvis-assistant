@@ -1,8 +1,9 @@
 """Redaction of secrets from log lines and error messages.
 
-Network libraries embed full URLs (including ``?appid=...`` style keys) in
-exception messages, so anything that may be logged must pass through
-:func:`redact` first. A logging filter applies it to every record.
+Network libraries embed full URLs (including ``?appid=...`` style keys and
+``user:password@`` userinfo) in exception messages, so anything that may be
+logged must pass through :func:`redact` first. A logging filter applies it to
+every record.
 """
 
 from __future__ import annotations
@@ -18,6 +19,12 @@ REDACTED = "[REDACTED]"
 _SENSITIVE_PARAM = r"(?:api[_-]?key|apikey|appid|access[_-]?key|accesskey|[a-z_-]*token|secret|password|key)"
 _QUERY_RE = re.compile(rf"(?i)([?&;]{_SENSITIVE_PARAM}=)[^&\s'\"<>]+")
 _HEADER_RE = re.compile(r"(?i)\b(authorization:\s*bearer\s+|x-api-key:\s*)[^\s'\",]+")
+# URL userinfo credentials (``scheme://user:password@host``), e.g. git remote URLs. The
+# password shape matches no token prefix and appears in no query parameter, so it needs its
+# own rule. Conservative by construction: a scheme with ``://`` is required, the password
+# cannot contain ``/``, ``@`` or whitespace, and a closing ``@`` is required - so ports
+# (``host:8080/path``) and scp-style syntax (``git@host:path``) never match.
+_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s/:@]+):([^\s@/]+)@")
 _TOKEN_PATTERNS = (
     re.compile(r"\bpv_[A-Za-z0-9+/]{16,}={0,2}"),
     re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
@@ -44,6 +51,7 @@ def redact(value: object, extra_secrets: tuple[str, ...] = ()) -> str:
         text = text.replace(secret, REDACTED)
     text = _QUERY_RE.sub(lambda m: m.group(1) + REDACTED, text)
     text = _HEADER_RE.sub(lambda m: m.group(1) + REDACTED, text)
+    text = _USERINFO_RE.sub(lambda m: m.group(1) + ":" + REDACTED + "@", text)
     for pattern in _TOKEN_PATTERNS:
         text = pattern.sub(REDACTED, text)
     return text
