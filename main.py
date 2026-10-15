@@ -30,6 +30,7 @@ from ultron.config import (
     load_chat_model,
     load_dotenv_if_enabled,
 )
+from ultron.history import recent as chat_history_recent, record_exchange as chat_history_record
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
@@ -2129,8 +2130,12 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     # plain questions); without a configured model, or with ULTRON_AGENT=0, to the chat reply.
     if agent_available():
         return run_agent(raw, ctx)
-    history = []  # simple history for now
-    return ask_gpt(cmd, history)
+    # Bounded, redacted local transcript (docs/CONVERSATION_HISTORY.md): the single-shot chat
+    # sees the last few turns instead of starting cold. The agent loop keeps its own audit
+    # ledger and is deliberately not fed from here. ULTRON_HISTORY=0 disables both sides.
+    reply = ask_gpt(cmd, chat_history_recent())
+    chat_history_record(cmd, reply)
+    return reply
 
 
 # ================== OPTIONAL CLI LOOP ==================

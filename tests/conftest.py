@@ -16,6 +16,8 @@ import pytest
 
 _SANDBOX = Path(tempfile.mkdtemp(prefix="ultron-tests-"))
 os.environ["ULTRON_SKIP_DOTENV"] = "1"
+# Tests never write to the owner's chat transcript; history tests opt in explicitly.
+os.environ["ULTRON_HISTORY"] = "0"
 os.environ["ULTRON_DATA_DIR"] = str(_SANDBOX / "data")
 os.environ["ULTRON_MEMORY_FILE"] = str(_SANDBOX / "memory.json")
 os.environ["ULTRON_KNOWLEDGE_DIR"] = str(_SANDBOX / "knowledge_docs")

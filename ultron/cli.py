@@ -418,7 +418,44 @@ def build_parser() -> argparse.ArgumentParser:
     agent.add_argument("objective", nargs="+", help="what you want done, in plain words")
     agent.add_argument("--steps", action="store_true", help="also print each tool call and the final status")
     agent.set_defaults(func=_cmd_agent)
+    hist = sub.add_parser("history", help="local chat transcript: show, export, import or clear")
+    hist.add_argument("--show", nargs="?", type=int, const=5, metavar="N",
+                      help="print the last N records (default 5)")
+    hist.add_argument("--export", metavar="FILE", help="write the redacted transcript to FILE (JSONL)")
+    hist.add_argument("--import", dest="import_file", metavar="FILE",
+                      help="append validated records from FILE (JSONL); invalid lines are skipped")
+    hist.add_argument("--clear", action="store_true", help="delete the local transcript file")
+    hist.set_defaults(func=_cmd_history)
     return parser
+
+
+def _cmd_history(args: argparse.Namespace) -> int:
+    from ultron.history import clear, export_to, history_path, import_from, records
+
+    if args.export:
+        count = export_to(args.export)
+        print(f"exported {count} record(s) to {args.export}")
+        return 0
+    if args.import_file:
+        try:
+            imported, skipped = import_from(args.import_file)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"import failed: {exc}", file=sys.stderr)
+            return 1
+        print(f"imported {imported} record(s), skipped {skipped}")
+        return 0
+    if args.clear:
+        clear()
+        print("chat history cleared")
+        return 0
+    stored = records()
+    print(f"chat history: {len(stored)} record(s) in {history_path()} "
+          "(ULTRON_HISTORY=0 disables recording)")
+    limit = args.show if args.show is not None else 5
+    for item in (stored[-limit:] if limit > 0 else []):  # [-0:] would print everything
+        text = str(item["text"]).replace("\n", " ")
+        print(f"  [{item['role']}] {text[:100]}{'…' if len(text) > 100 else ''}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
