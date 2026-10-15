@@ -615,3 +615,57 @@ def test_explain_and_search_reject_nested_and_relative_symlink_chains(tmp_path):
 
     full_scan = search.run({"query": "CHAIN_LEAK"})
     assert full_scan.ok is True and full_scan.data["count"] == 0
+
+
+# ============================================================ 15. ignored directories cannot be targeted directly
+def test_explain_and_search_refuse_direct_targeting_of_ignored_directories(tmp_path):
+    """The walks skip IGNORED_DIRS; a direct ``path`` argument must not bypass that policy.
+
+    VCS metadata is the sharp case: ``.git/config`` can hold remote URLs with embedded
+    credentials (``https://user:password@host``) whose password shape ``redact`` does not
+    pattern-match, and ``.git/logs``/``COMMIT_EDITMSG`` expose operation history - none of
+    those names trip the sensitive-name filter, so only the ignored-directory policy stops them.
+    """
+    repo = _seed_sample_repo(tmp_path / "repo")
+    # Assembled at runtime so the repository's own secret scanner is not tripped by the fixture
+    # (same convention as tests/test_groq_provider.py). It is not a real credential.
+    fake_secret = "Sup3r" + "S3cret" + "Passw0rd"
+    git_dir = repo / ".git"
+    (git_dir / "logs").mkdir(parents=True)
+    (git_dir / "config").write_text(
+        f'[remote "origin"]\n\turl = https://bot:{fake_secret}@github.com/example/repo.git\n',
+        encoding="utf-8",
+    )
+    (git_dir / "COMMIT_EDITMSG").write_text("internal draft message DRAFT-9\n", encoding="utf-8")
+    (git_dir / "logs" / "HEAD").write_text("0000000 1111111 Bot <b@x> commit: draft\n", encoding="utf-8")
+    nested_git = repo / "sub" / ".git"
+    nested_git.mkdir(parents=True)
+    (nested_git / "config").write_text(f"[core]\n\tbare = false\n; {fake_secret}\n", encoding="utf-8")
+    (repo / ".venv").mkdir()
+    (repo / ".venv" / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
+
+    explain = ProjectExplainTool(root=repo)
+    search = ProjectSearchTool(root=repo)
+
+    for path in (".git", ".git/config", ".git/COMMIT_EDITMSG", ".git/logs/HEAD",
+                 "sub/.git/config", ".venv/pyvenv.cfg"):
+        explained = explain.run({"path": path})
+        assert explained.ok is False, path
+        assert explained.data["reason"] == "ignored", (path, explained.data["reason"])
+        assert fake_secret not in str(explained.data)
+
+    for path in (".git", ".git/config", "sub/.git", ".venv"):
+        found = search.run({"query": fake_secret, "path": path})
+        assert found.ok is False, path
+        assert found.data["reason"] == "ignored", (path, found.data["reason"])
+        assert fake_secret not in str(found.data)
+
+    # The walk-level policy is unchanged: a root search still works and still skips .git.
+    # (The result payload echoes the caller's own query, so the leak assertion applies to
+    # the repository-derived fields, not to the echoed input.)
+    full_scan = search.run({"query": fake_secret})
+    assert full_scan.ok is True and full_scan.data["count"] == 0
+    assert full_scan.data["matches"] == []
+    assert fake_secret not in str(full_scan.data["matches"]) + str(full_scan.data["skipped"])
+    # Normal project files keep working.
+    assert explain.run({"path": "main.py"}).ok is True
