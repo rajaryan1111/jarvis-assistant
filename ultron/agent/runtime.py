@@ -418,6 +418,12 @@ class AgentRuntime:
                     max_output_tokens=self.limits.max_output_tokens,
                 )
             except ProviderError as err:
+                if err.usage is not None:
+                    # Tokens spent before this failure (e.g. an advisory phase) still belong to this
+                    # run's budget and usage report; a failed call returns no turn, so this is the
+                    # only place they can be counted - and they are counted exactly once.
+                    run.input_tokens += err.usage.input_tokens
+                    run.output_tokens += err.usage.output_tokens
                 log.info("agent %s model_call n=%d status=error kind=%s ms=%d", run.handle.run_id, run.model_calls,
                          err.kind, _ms(self._clock() - began))
                 if err.kind in ("malformed_call", "malformed_output"):

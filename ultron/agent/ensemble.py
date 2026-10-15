@@ -260,20 +260,27 @@ class EnsembleProvider:
 
         merged = self._inject(messages, advisory) if advisory else list(messages)
         remaining = max(timeout - (self._clock() - started), 0.1)
-        # Logged with the real spend so the cost of this phase is recoverable from the log even on
-        # the path where the primary call fails and the turn's usage can never be reported.
+        # Logged with the real spend, so the cost of this phase is auditable without reading the
+        # run's usage report (which also carries it - see the error path below).
         log.info("ensemble advisers=%d usable=%d synthesis=%s advisory_chars=%d advisory_tokens_in=%d "
                  "advisory_tokens_out=%d remaining=%.1fs",
                  len(outcomes), len(usable), "yes" if synthesis else "no", len(advisory),
                  extra_in, extra_out, remaining)
 
-        turn = self.primary.complete(merged, tools, timeout=remaining, max_output_tokens=max_output_tokens)
+        advice_usage = Usage(extra_in, extra_out)
+        try:
+            turn = self.primary.complete(merged, tools, timeout=remaining, max_output_tokens=max_output_tokens)
+        except ProviderError as err:
+            # The advisory phase has already been paid for. Report what it cost on the error itself
+            # so the runtime can still count it against the run's token budget and usage; without
+            # this a failed turn would under-report by exactly one advisory phase.
+            if not extra_in and not extra_out:
+                raise
+            raise ProviderError(err.kind, err.message, status=err.status, code=err.code,
+                                usage=advice_usage) from err
         if not extra_in and not extra_out:
             return turn
         # Report the advisory pass' real cost: the runtime's token budget must see every call.
-        # Known limitation: if this primary call raises, the usage below is never observed by the
-        # runtime (it only reads usage from a returned turn), so a failed turn under-reports by at
-        # most one advisory phase. The spend is still visible in the log line above.
         return dataclasses.replace(
             turn,
             usage=Usage(turn.usage.input_tokens + extra_in, turn.usage.output_tokens + extra_out),

@@ -680,3 +680,81 @@ def test_ensemble_does_not_change_reports_for_routine_requests(legacy):
     assert [m.role for m in messages] == ["system", "user"]
     assert messages[1].content == "what time is it"
     assert "AUXILIARY ANALYSIS" not in messages[0].content
+
+
+# ============================================================ 5. token accounting
+# The advisory phase is paid for before the primary turn exists, so its cost has to reach the run's
+# usage report on every path - and exactly once - including when the primary call then fails.
+def test_advisory_usage_is_reported_on_the_error_when_the_primary_call_fails():
+    primary = FakeModel(ProviderError("unavailable", "The language model is unavailable right now."))
+    a1 = adviser("fake:a", ModelTurn(text="Check the lock ordering.", usage=Usage(5, 7)))
+    provider = build(primary, [a1])
+
+    with pytest.raises(ProviderError) as err:
+        provider.complete(FIRST_TURN, (), timeout=20.0, max_output_tokens=400)
+
+    assert err.value.usage == Usage(5, 7)
+    # Everything callers already rely on about the error is preserved exactly.
+    assert (err.value.kind, err.value.message) == ("unavailable", "The language model is unavailable right now.")
+    assert err.value.status is None and err.value.code is None
+    assert a1.call_count == 1
+
+
+def test_error_usage_also_covers_the_comparison_call_that_already_ran():
+    primary = FakeModel(ModelTurn(text="comparison", usage=Usage(3, 4)),
+                        ProviderError("timeout", "The language model did not answer in time."))
+    a1 = adviser("fake:a", ModelTurn(text="one", usage=Usage(5, 7)))
+    a2 = adviser("fake:b", ModelTurn(text="two", usage=Usage(6, 8)))
+    provider = build(primary, [a1, a2])
+
+    with pytest.raises(ProviderError) as err:
+        provider.complete(FIRST_TURN, (), timeout=20.0, max_output_tokens=400)
+
+    assert err.value.kind == "timeout"
+    assert err.value.usage == Usage(5 + 6 + 3, 7 + 8 + 4)
+    assert primary.call_count == 2  # the comparison call, then the turn that failed
+
+
+def test_no_usage_is_attached_when_the_advisory_phase_spent_nothing():
+    """An unchanged re-raise: nothing to add must not become a zero-valued usage claim."""
+    original = ProviderError("rate_limited", "The language model is rate limited right now; try again in a minute.")
+    a1 = adviser("fake:a", ProviderError("unavailable", "down"))  # failed before reporting any usage
+    provider = build(FakeModel(original), [a1])
+
+    with pytest.raises(ProviderError) as err:
+        provider.complete(FIRST_TURN, (), timeout=20.0, max_output_tokens=400)
+
+    assert err.value is original
+    assert err.value.usage is None
+
+
+def test_runtime_counts_advisory_usage_when_the_primary_call_fails(legacy, fast_budget):
+    primary = FakeModel(ProviderError("unavailable", "The language model is unavailable right now."))
+    a1 = adviser("fake:a", ModelTurn(text="advisory note", usage=Usage(5, 7)))
+    provider = build(primary, [a1])
+    runtime = AgentRuntime(legacy.TOOLS, provider, limits=AgentLimits(), runs=RunRegistry(),
+                           executor=ToolExecutor())
+
+    report = runtime.run(HARD_REQUEST, owner_hud())
+
+    # The verdict and the wording are the pre-existing provider-error ones; only usage changed.
+    assert (report.status, report.stop_reason, report.error) == ("failed", "provider_error", "unavailable")
+    assert report.reply.startswith("I stopped because the language model is unavailable right now")
+    assert "may be incomplete" in report.reply
+    assert report.usage == {"model_calls": 1, "input_tokens": 5, "output_tokens": 7}
+    assert report.public()["usage"] == report.usage
+
+
+def test_advisory_usage_survives_a_rejected_turn_and_is_counted_exactly_once(legacy, fast_budget):
+    primary = FakeModel(ProviderError("malformed_output", "output_parse_failed"),
+                        ModelTurn(text="Recovered answer.", usage=Usage(11, 13)))
+    a1 = adviser("fake:a", ModelTurn(text="advisory note", usage=Usage(5, 7)))
+    provider = build(primary, [a1])
+    runtime = AgentRuntime(legacy.TOOLS, provider, limits=AgentLimits(), runs=RunRegistry(),
+                           executor=ToolExecutor())
+
+    report = runtime.run(HARD_REQUEST, owner_hud())
+
+    assert a1.call_count == 1  # the pass ran on the real first turn only, so it is charged once
+    assert primary.call_count == 2  # the rejected turn plus the recovery turn
+    assert report.usage == {"model_calls": 2, "input_tokens": 5 + 11, "output_tokens": 7 + 13}

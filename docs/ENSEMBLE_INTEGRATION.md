@@ -105,14 +105,13 @@ Two further conditions apply on every call, and are re-checked rather than assum
   runtime's token budget accounts for the real cost. The runtime's `model_calls` counter still
   counts *primary turns*; the extra calls are reported in the `ultron.ensemble` log line, which
   prints the advisory spend explicitly (`advisory_tokens_in` / `advisory_tokens_out`).
-* **Known accounting limitation (bounded).** The runtime only reads usage from a *returned* turn.
-  If the primary call fails after the advisory phase has already run, that one phase's tokens are
-  not included in the run's usage report — they remain visible only in the log line above. Since
-  the pass can now run at most once per run, the under-report is bounded to a single advisory phase
-  (at most three adviser calls plus one comparison call, each capped by
-  `ULTRON_ENSEMBLE_MAX_OUTPUT_TOKENS`). Closing it properly would mean carrying usage on the
-  provider error itself, a change to the core `ProviderError`/runtime contract that this
-  integration deliberately avoids.
+* **Accounting on failure (fixed).** Usage is read from returned turns *and* from provider errors:
+  `ProviderError.usage` (optional, `None` when unknown) carries what a call already spent before
+  failing, and the runtime adds it to the run's usage exactly once, so an advisory phase that ran
+  before a failed primary call still counts against the token budget and appears in the report.
+  The field is purely additive — every existing raiser keeps working unchanged, and the wrapper in
+  `EnsembleProvider` preserves the error's kind, message, status and code. When an advisory phase
+  spent nothing, the original error object is re-raised untouched rather than wrapped with a zero.
 * Cancellation is checked between runtime turns as before. Because the advisory phase runs inside a
   model call, a cancel issued mid-phase is honoured after the phase ends — bounded by the advisory
   budget (≤ 15 s by default, and never more than half of the remaining turn timeout).
@@ -148,6 +147,9 @@ stored in the block, and the whole block is hard-capped.
 * Advisers are never shown the primary system prompt, the conversation history or any tool result.
 * The advisory block cannot authorise anything; the runtime's ledger verification and the
   taint-escalation rules are untouched, and a model still cannot confirm its own action.
+* The one change to a core file is additive accounting: `ProviderError` gained an optional `usage`
+  field, and `AgentRuntime` adds it to the run's counters while handling the error. Error kinds,
+  messages, status codes, stop reasons and control flow are unchanged.
 
 ## 8. Provenance and licensing
 
@@ -195,6 +197,11 @@ adviser answers, comparison fallback, size and concurrency bounds (including tha
 reporting, and integration through the real `AgentRuntime` — including an adviser that tries to
 inject instructions and return a tool call, a provider that rejects its first turn (the advisory
 pass must not run twice), and a crashing adviser that must not hide another adviser's answer.
+
+Token accounting has its own tests (`tests/test_ensemble.py` §5 and
+`tests/test_agent_loop.py` §8): advisory usage must survive a failed primary call — including the
+rejected-turn-then-recovery path — and must never be counted twice, while an error without usage
+must stay exactly the object it was (no zero-valued wrapper).
 
 Relevant checks:
 

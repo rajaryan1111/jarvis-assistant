@@ -21,7 +21,7 @@ from flask.testing import FlaskClient
 
 from ultron.agent import catalog as agent_catalog
 from ultron.agent.catalog import build_catalog, model_name
-from ultron.agent.provider import Message, ModelTurn, OpenAIChatProvider, ProviderError, ToolCall
+from ultron.agent.provider import Message, ModelTurn, OpenAIChatProvider, ProviderError, ToolCall, Usage
 from ultron.agent.runtime import STOP_REASONS, AgentLimits, AgentRuntime, RunRegistry, ToolExecutor
 from ultron.agent.schema import SchemaDefinitionError, check_schema, validate
 from ultron.api.app import create_app
@@ -389,6 +389,22 @@ def test_provider_errors_end_the_run_safely(legacy, kind):
 def test_unexpected_provider_exception_does_not_crash(legacy):
     report = runtime(legacy, ScriptedModel(RuntimeError("bug"))).run("x", HUD())
     assert report.status == "failed" and "internal error" in report.reply
+
+
+def test_usage_reported_by_a_failed_provider_call_is_still_counted(legacy):
+    """A provider can spend tokens before failing (e.g. an auxiliary advisory phase)."""
+    err = ProviderError("unavailable", "The language model is unavailable right now.", usage=Usage(5, 7))
+    report = runtime(legacy, ScriptedModel(err)).run("what time", HUD())
+    assert report.status == "failed" and report.error == "unavailable"
+    assert report.usage == {"model_calls": 1, "input_tokens": 5, "output_tokens": 7}
+    assert report.public()["usage"] == report.usage
+
+
+def test_provider_error_usage_is_optional_and_defaults_to_unknown():
+    """The field is additive: every existing raiser still produces an error without usage."""
+    err = ProviderError("timeout", "The language model did not answer in time.")
+    assert err.usage is None
+    assert (err.kind, err.status, err.code) == ("timeout", None, None)
 
 
 def test_empty_model_turn_is_a_failure(legacy):
