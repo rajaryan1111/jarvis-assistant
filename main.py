@@ -39,6 +39,8 @@ from ultron.history import recent as chat_history_recent, record_exchange as cha
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
+from ultron.voice import GoogleTranscriber, VoicePipeline, normalise_mode, profile_for
+from ultron.voice.pipeline import FAILURE_MESSAGES, DEFAULT_FAILURE_MESSAGE
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
 from ultron.tools.macos import (
     BrightnessTool,
@@ -67,7 +69,6 @@ GROQ_API_KEY = get_credential("GROQ_API_KEY")  # only used by the agent loop wit
 CHAT_MODEL = load_chat_model()  # ULTRON_CHAT_MODEL; the agent uses AGENT_CONFIG.model
 client = (OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_CLIENT_TIMEOUT, max_retries=OPENAI_CLIENT_MAX_RETRIES)
           if OPENAI_API_KEY else None)
-_recognizer = None  # created lazily; SpeechRecognition is an optional "voice" extra
 
 MEMORY_FILE = os.getenv("ULTRON_MEMORY_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory.json")
 WAKE_WORD = "jarvis"
@@ -112,65 +113,77 @@ def speak(text: str, ctx: CommandContext = None) -> str:
     return outcome.status
 
 
-def listen(timeout=6, phrase_time_limit=8) -> str:
-    """Microphone listening (only for CLI main loop). Requires the optional 'voice' extra."""
-    global _recognizer
-    try:
-        import speech_recognition as sr
-    except ImportError:
-        print("Voice input needs the optional 'voice' extra: uv sync --extra voice  (or pip install -e '.[voice]')")
-        time.sleep(2)
-        return ""
-    if _recognizer is None:
-        _recognizer = sr.Recognizer()
-    recognizer = _recognizer
-    with sr.Microphone() as source:
-        recognizer.adjust_for_ambient_noise(source, duration=0.4)
-        print("Listening...")
-        try:
-            audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
-            query = recognizer.recognize_google(audio, language="en-IN")
-            print(f"You: {query}")
-            return query.lower()
-        except Exception as e:
-            print("Listen error:", e)
-            return ""
+def listen(timeout=6, phrase_time_limit=8, language: str = None) -> str:
+    """Microphone listening (only for CLI main loop). Requires the optional 'voice' extra.
+
+    Recognition goes through the shared transcriber in :mod:`ultron.voice`, so the CLI
+    loop and the wake-word listener behave identically. ``language`` selects the
+    recognition locale (en|hi|hinglish|auto); it defaults to ``ULTRON_VOICE_LANGUAGE``,
+    which is English - the historical behaviour. Failures print a short reason and
+    return "", never raw recogniser text.
+    """
+    locale = profile_for(normalise_mode(language)).stt_locale
+    result = GoogleTranscriber().transcribe(locale=locale, timeout=timeout, phrase_time_limit=phrase_time_limit)
+    if result.ok:
+        print(f"You: {result.text}")
+        return result.text.lower()
+    print("Listen error:", FAILURE_MESSAGES.get(result.error or "", DEFAULT_FAILURE_MESSAGE))
+    return ""
 
 
 # ================== MEMORY ==================
+def _empty_memory():
+    return {
+        "notes": [],
+        "profile": {},
+        "favorites": {},
+        "smarthome": {},
+        "reminders": [],
+        "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
+        "plans": [],
+    }
+
+
+def _quarantine_unreadable_memory(exc: Exception) -> None:
+    """Set an unparseable memory file aside so the owner's data is never destroyed.
+
+    ``load_memory`` falls back to an empty structure when the file cannot be understood;
+    without this the next ``save_memory`` would overwrite the file and erase real notes,
+    reminders and profile. The file is renamed (recoverable), never deleted.
+    """
+    backup = Path(f"{MEMORY_FILE}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        os.replace(MEMORY_FILE, backup)
+    except OSError:
+        print("Memory load error:", type(exc).__name__, "(could not set the unreadable file aside)")
+        return
+    print(f"Memory file was unreadable ({type(exc).__name__}); moved it to {backup.name} and started fresh.")
+
+
 def load_memory():
     if not os.path.exists(MEMORY_FILE):
-        return {
-            "notes": [],
-            "profile": {},
-            "favorites": {},
-            "smarthome": {},
-            "reminders": [],
-            "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
-            "plans": [],
-        }
+        return _empty_memory()
     try:
-        with open(MEMORY_FILE, "r") as f:
+        # utf-8 is pinned: the file may hold any language, and the locale default is not.
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Make sure all keys exist even for old files
-            data.setdefault("notes", [])
-            data.setdefault("profile", {})
-            data.setdefault("favorites", {})
-            data.setdefault("smarthome", {})
-            data.setdefault("reminders", [])
-            data.setdefault("security", {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60})
-            data.setdefault("plans", [])
-            return data
+        if not isinstance(data, dict):
+            raise ValueError("memory file is not a JSON object")
+        # Make sure all keys exist even for old files
+        data.setdefault("notes", [])
+        data.setdefault("profile", {})
+        data.setdefault("favorites", {})
+        data.setdefault("smarthome", {})
+        data.setdefault("reminders", [])
+        data.setdefault("security", {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60})
+        data.setdefault("plans", [])
+        return data
+    except ValueError as exc:
+        # UnicodeDecodeError / JSONDecodeError / wrong shape: preserve, then start fresh.
+        _quarantine_unreadable_memory(exc)
+        return _empty_memory()
     except Exception:
-        return {
-            "notes": [],
-            "profile": {},
-            "favorites": {},
-            "smarthome": {},
-            "reminders": [],
-            "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
-            "plans": [],
-        }
+        return _empty_memory()
 
 
 _memory_lock = threading.RLock()
@@ -2204,28 +2217,65 @@ _EXIT_PHRASES = frozenset({
 })
 
 
+_VOICE_GOODBYE = "Goodbye, sir."  # sentinel reply: the voice loop ends after speaking it
+
+
 def is_exit_command(text: str) -> bool:
     """Only whole exit phrases end the CLI loop ("stop the music" or "shutdown system" do not)."""
     return text.strip().strip(".!?").lower() in _EXIT_PHRASES
 
 
+def _voice_responder(text: str, ctx) -> str:
+    """Command routing for a spoken turn: strip the wake word, then route or say goodbye."""
+    if WAKE_WORD in text:
+        text = text.replace(WAKE_WORD, "").strip()
+    if is_exit_command(text):
+        return _VOICE_GOODBYE
+    return handle_command(text, ctx)
+
+
+def report_interrupted_tasks() -> list:
+    """Tell the owner which saved tasks were interrupted by the last shutdown.
+
+    Recovery only restores context: nothing is re-executed here, and a task that could
+    take a real-world action is not made runnable until it is confirmed again.
+    """
+    try:
+        from ultron.tasks import TaskStore
+
+        store = TaskStore.for_env()
+        interrupted = store.recover()
+    except Exception as e:  # a broken task file must never stop JARVIS from starting
+        print("Could not read saved tasks:", redact(e))
+        return []
+    for task in interrupted:
+        print(f"Interrupted task: {task.title} (nothing was re-run; say 'resume task' to continue)")
+    for moved in store.quarantined:
+        print(f"Saved task state was unusable and was moved to {moved.name}; starting with no saved tasks.")
+    return interrupted
+
+
 def main():
     load_dotenv_if_enabled()
     start_background_services()
+    report_interrupted_tasks()
     ctx = CommandContext.local_voice()  # the person at this machine's microphone
     # Boot voice: Tony-ish
     speak("JARVIS system initializing. Welcome back, sir. You can ask me anything.", ctx)
+    # Voice loop: recognition, language handling, routing and speech output are separate
+    # stages (ultron.voice). ULTRON_VOICE_LANGUAGE selects en|hi|hinglish|auto; a spoken
+    # "switch to hindi" changes it for the rest of the session.
+    pipeline = VoicePipeline(
+        transcriber=GoogleTranscriber(),
+        responder=lambda text: _voice_responder(text, ctx),
+        speaker=lambda text: speak(text, ctx),
+        language=normalise_mode(None),
+    )
     while True:
-        text = listen()
-        if not text:
-            continue
-        if WAKE_WORD in text:
-            text = text.replace(WAKE_WORD, "").strip()
-        if is_exit_command(text):
-            speak("Goodbye, sir.", ctx)
+        turn = pipeline.run()
+        spoken = turn.transcript.replace(WAKE_WORD, "").strip()
+        if turn.reply == _VOICE_GOODBYE and is_exit_command(spoken):
             break
-        reply = handle_command(text, ctx)
-        speak(reply, ctx)
 
 
 if __name__ == "__main__":

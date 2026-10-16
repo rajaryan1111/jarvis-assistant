@@ -21,6 +21,8 @@ import requests
 
 from ultron.config import MissingCredentialError, load_dotenv_if_enabled, load_settings, require_credential
 from ultron.security.redact import redact
+from ultron.voice import GoogleTranscriber, normalise_mode, profile_for
+from ultron.voice.pipeline import DEFAULT_FAILURE_MESSAGE, FAILURE_MESSAGES
 from ultron.security.tokens import load_api_token, load_client_token
 
 # Keyword file path (jarvis.ppn in the project folder)
@@ -57,25 +59,21 @@ class ServerClient:
 
 
 def listen_command(sr) -> str:
-    """After wake word, listen for one spoken command."""
-    print("Listening for command...")
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        recognizer.adjust_for_ambient_noise(source, duration=0.4)
-        try:
-            audio = recognizer.listen(source, timeout=6, phrase_time_limit=6)
-        except Exception as e:
-            print("Listen error (command):", redact(e))
-            return ""
+    """After wake word, listen for one spoken command.
 
-    try:
-        text = recognizer.recognize_google(audio, language="en-IN")
-        text = text.lower().strip()
+    Recognition goes through the shared transcriber (``ultron.voice``), so the wake-word
+    listener and the CLI loop use the same locale and the same failure handling. The
+    locale follows ``ULTRON_VOICE_LANGUAGE`` (default English, as before).
+    """
+    print("Listening for command...")
+    result = GoogleTranscriber(sr_module=sr).transcribe(
+        locale=profile_for(normalise_mode(None)).stt_locale, timeout=6, phrase_time_limit=6)
+    if result.ok:
+        text = result.text.lower()
         print("Heard command:", text)
         return text
-    except Exception as e:
-        print("Speech recognition error:", redact(e))
-        return ""
+    print("Listen error (command):", FAILURE_MESSAGES.get(result.error or "", DEFAULT_FAILURE_MESSAGE))
+    return ""
 
 
 # ================== MAIN WAKE WORD LOOP ==================

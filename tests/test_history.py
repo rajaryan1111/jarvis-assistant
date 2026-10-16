@@ -253,3 +253,28 @@ def test_cli_history_show_export_import_clear(tmp_path, monkeypatch, capsys):
 
     assert cli_main(["history", "--import", str(tmp_path / "missing.jsonl")]) == 1
     assert "import failed" in capsys.readouterr().err
+
+
+# ============================================================ 5. transcript file protection
+def test_transcript_file_is_owner_only(tmp_path, env):
+    """The transcript holds personal conversation text: it must not be world-readable,
+    matching the 0600 mode the knowledge index already uses."""
+    history.record_exchange("private question", "private answer", env)
+    transcript = tmp_path / history.HISTORY_FILENAME
+    assert transcript.stat().st_mode & 0o777 == 0o600
+
+
+def test_failed_write_keeps_the_old_transcript_and_leaves_no_temp_files(tmp_path, env, monkeypatch):
+    history.record_exchange("kept question", "kept answer", env)
+    transcript = tmp_path / history.HISTORY_FILENAME
+    before = transcript.read_text(encoding="utf-8")
+
+    def boom(*_args, **_kwargs):
+        raise OSError("simulated write failure")
+
+    monkeypatch.setattr("ultron.security.paths.atomic_replace", boom)
+
+    history.record_exchange("lost question", "lost answer", env)  # warning only, no exception
+
+    assert transcript.read_text(encoding="utf-8") == before
+    assert [p.name for p in tmp_path.iterdir() if ".tmp" in p.name] == []
