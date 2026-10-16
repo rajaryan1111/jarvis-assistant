@@ -10,6 +10,9 @@ transcript the owner can inspect, export and import:
   record, imports capped per record and per file;
 * **redacted** - every text passes :func:`ultron.security.redact` on the way in *and* on
   import, so credential-shaped strings do not accumulate in the file;
+* **owner-only** - the file is written 0600 through the shared atomic writer (unique
+  temp file, ``fsync``, ``os.replace``, temp cleanup on failure), so the transcript is
+  never world-readable and a failed write can never truncate it;
 * **opt-out** - ``ULTRON_HISTORY=0`` disables recording and replay completely;
 * **fail-soft** - a broken or unwritable transcript never breaks a chat reply.
 
@@ -28,6 +31,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from ultron.config import default_data_dir
+from ultron.security.paths import atomic_write_text
 from ultron.security.redact import redact
 
 log = logging.getLogger("ultron.history")
@@ -84,11 +88,15 @@ def _read(path: Path) -> list[dict]:
 
 
 def _write(path: Path, records: list[dict]) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        for item in records:
-            handle.write(json.dumps(item, ensure_ascii=False) + "\n")
-    tmp.replace(path)
+    """Replace ``path`` with ``records`` as JSONL, owner-only, atomically.
+
+    Goes through the shared atomic writer: a uniquely named temp file created with
+    ``O_EXCL`` in the same directory (a planted link is never followed), mode 0600,
+    ``fsync`` and ``os.replace``. A failed write removes the temp file and leaves the
+    previous transcript intact, so a crash or a full disk can never truncate history.
+    """
+    payload = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in records)
+    atomic_write_text(path, payload)
 
 
 def records(env: Mapping[str, str] | None = None) -> list[dict]:
