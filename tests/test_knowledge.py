@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import knowledge
 
 
@@ -106,10 +108,10 @@ def test_knowledge_rebuild_bounds_file_count(monkeypatch, tmp_path):
     assert len(saved["entries"]) == 3
 
 
-def test_knowledge_rebuild_bounds_file_bytes(monkeypatch, tmp_path):
+def test_knowledge_rebuild_bounds_file_chars(monkeypatch, tmp_path):
     docs = _point_docs_at(monkeypatch, tmp_path)
     (docs / "big.txt").write_text("a" * 10_000)
-    monkeypatch.setattr(knowledge, "MAX_FILE_BYTES", 1_000)
+    monkeypatch.setattr(knowledge, "MAX_FILE_CHARS", 1_000)
 
     knowledge.rebuild_knowledge_base()
 
@@ -246,7 +248,45 @@ def test_knowledge_load_index_rejects_oversized_file(monkeypatch, tmp_path):
     monkeypatch.setattr(knowledge, "INDEX_FILE", str(index_file))
     monkeypatch.setattr(knowledge, "MAX_INDEX_BYTES", 32)
 
-    assert knowledge._load_index() is None
+    with pytest.raises(knowledge._IndexTooLarge):
+        knowledge._load_index()
+
+
+def test_knowledge_reports_oversized_index_on_read(monkeypatch, tmp_path):
+    index_file = _index_path(tmp_path)
+    monkeypatch.setattr(knowledge, "INDEX_FILE", str(index_file))
+    monkeypatch.setattr(knowledge, "_get_model", lambda: _FakeEmbedModel())
+    index_file.write_text(
+        json.dumps({"entries": [{"source": "a.md", "chunk_id": 1, "text": "dijkstra", "embedding": [1.0, 0.1]}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(knowledge, "MAX_INDEX_BYTES", 32)
+
+    reply = knowledge.answer_from_knowledge("shortest path", openai_client=None)
+
+    assert "too large" in reply.lower()
+    assert "indexed notes yet" not in reply
+
+
+def test_knowledge_rejects_nonfinite_question_embedding(monkeypatch, tmp_path):
+    index_file = _index_path(tmp_path)
+    monkeypatch.setattr(knowledge, "INDEX_FILE", str(index_file))
+
+    class NanQuestionModel:
+        def encode(self, texts, **kwargs):
+            return [[float("nan"), 0.1] for _ in texts]
+
+    monkeypatch.setattr(knowledge, "_get_model", lambda: NanQuestionModel())
+    index_file.write_text(
+        json.dumps({"entries": [{"source": "a.md", "chunk_id": 1,
+                                 "text": "dijkstra shortest path", "embedding": [1.0, 0.1]}]}),
+        encoding="utf-8",
+    )
+
+    reply = knowledge.answer_from_knowledge("shortest path", openai_client=None)
+
+    assert "local embedding step failed" in reply
+    assert "a.md#chunk-1" not in reply  # no misleading ranked result from NaN scores
 
 
 # --- Phase 7.1 follow-up: capacity reconciliation and pre-allocation bounds ----

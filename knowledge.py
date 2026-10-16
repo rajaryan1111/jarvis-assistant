@@ -27,7 +27,10 @@ INSTALL_HINT = "Install the knowledge-base extra with: uv sync --extra rag (or p
 # unexpected, and retrieved context must stay bounded before it reaches a model.
 # These are deliberate fixed limits, not configuration surface.
 MAX_FILES = 2000                  # documents scanned per rebuild
-MAX_FILE_BYTES = 8 * 1024 * 1024  # characters read per text document (8 MiB)
+MAX_FILE_CHARS = 8 * 1024 * 1024  # characters read per text document (8 MiB of
+                                 # ASCII; non-BMP text can occupy up to ~4x
+                                 # that in memory, so the bound counts
+                                 # characters, not bytes)
 MAX_PDF_PAGES = 1000              # pages parsed per PDF
 MAX_EXTRACTED_CHARS = 2_000_000   # extracted text kept per document
 MAX_CHUNKS_PER_DOC = 2000         # chunks kept per document
@@ -185,9 +188,9 @@ def _load_pdf(path: str) -> str:
 def _load_textfile(path: str) -> str:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            data = f.read(MAX_FILE_BYTES)
+            data = f.read(MAX_FILE_CHARS)
             if f.read(1):
-                print(f"[KB] File capped at {MAX_FILE_BYTES} chars:", path)
+                print(f"[KB] File capped at {MAX_FILE_CHARS} chars:", path)
         return data
     except Exception as e:
         print("[KB] Text read error:", path, type(e).__name__)
@@ -322,14 +325,15 @@ def _load_index():
         return None
     try:
         if os.path.getsize(INDEX_FILE) > MAX_INDEX_BYTES:
-            print("[KB] Index file exceeds the size cap; ignoring it:", INDEX_FILE)
-            return None
+            raise _IndexTooLarge
         with open(INDEX_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return None
         entries = data.get("entries", [])
         return entries if isinstance(entries, list) else None
+    except _IndexTooLarge:
+        raise
     except Exception as e:
         print("[KB] Failed to load index:", type(e).__name__)
         return None
@@ -340,7 +344,14 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
     Use the prebuilt index + GPT (from main.py) to answer from personal notes.
     OFFLINE embeddings for retrieval, GPT for generation is still done in main.py.
     """
-    entries = _load_index()
+    try:
+        entries = _load_index()
+    except _IndexTooLarge:
+        return (
+            "Your knowledge index is too large for me to load, sir "
+            f"(my limit is {MAX_INDEX_BYTES // (1024 * 1024)} MiB). "
+            "Please remove or split some documents and rebuild it."
+        )
     if not entries:
         return (
             "I do not have any indexed notes yet, sir. "
@@ -354,13 +365,16 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
         return f"I cannot search your knowledge base yet, sir: {exc}"
     try:
         q_emb = emb_model.encode([question])[0]
+        q_values = [float(x) for x in q_emb]
+        if not q_values or not all(math.isfinite(v) for v in q_values):
+            raise ValueError("question embedding is empty or non-finite")
     except Exception as e:
         print("[KB] Question embedding error:", type(e).__name__)
         return "I tried to search your knowledge base, but the local embedding step failed, sir."
 
     # Score each chunk. Index entries are untrusted on-disk data: shape, embedding
     # dimension, finite numeric values and text length are validated before ranking.
-    q_dim = len(q_emb)
+    q_dim = len(q_values)
     scored = []
     for e in entries:
         if not isinstance(e, dict):
@@ -387,7 +401,7 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
         if not all(math.isfinite(v) for v in values):
             continue
         try:
-            score = _cosine_similarity(q_emb, values)
+            score = _cosine_similarity(q_values, values)
         except (TypeError, ValueError):
             continue
         scored.append((score, e))
