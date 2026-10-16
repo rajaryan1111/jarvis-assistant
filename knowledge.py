@@ -126,6 +126,20 @@ def _list_documents():
     return files
 
 
+def _within_docs_root(path: str) -> bool:
+    """True if ``path`` (after resolving symlinks) is inside the configured docs root.
+
+    Defense in depth behind ``_list_documents()``: the rebuild refuses to read a
+    file that resolves outside the knowledge root even if discovery ever lets one
+    through, so a planted link cannot pull outside data into the index.
+    """
+    try:
+        root = os.path.realpath(DOCS_DIR)
+        return os.path.commonpath([root, os.path.realpath(path)]) == root
+    except (OSError, ValueError):
+        return False
+
+
 def _pdf_reader_class():
     try:
         from pypdf import PdfReader
@@ -251,8 +265,12 @@ def rebuild_knowledge_base(openai_client=None):
     print("[KB] Rebuilding knowledge index from files:", files)
 
     all_entries = []
+    indexed_files = 0
 
     for path in files:
+        if not _within_docs_root(path):
+            print("[KB] Skipping file outside the knowledge root:", path)
+            continue
         if len(all_entries) >= MAX_TOTAL_CHUNKS:
             print(f"[KB] Chunk cap reached at {MAX_TOTAL_CHUNKS} entries; remaining documents skipped.")
             break
@@ -266,6 +284,7 @@ def rebuild_knowledge_base(openai_client=None):
         if not raw.strip():
             continue
 
+        indexed_files += 1
         chunks = _chunk_text(raw, chunk_size=1200, overlap=200)[:MAX_CHUNKS_PER_DOC]
         print(f"[KB] {path}: {len(chunks)} chunks")
         for idx, ch in enumerate(chunks, start=1):
@@ -317,7 +336,7 @@ def rebuild_knowledge_base(openai_client=None):
         print("[KB] Failed to save index:", type(e).__name__)
         return "I tried to save the knowledge index, but something went wrong, sir."
 
-    return f"I have indexed {len(all_entries)} chunks from {len(files)} files in your knowledge base, sir."
+    return f"I have indexed {len(all_entries)} chunks from {indexed_files} files in your knowledge base, sir."
 
 
 def _load_index():

@@ -402,3 +402,85 @@ def test_knowledge_pdf_read_error_is_contained(monkeypatch, tmp_path):
     monkeypatch.setattr(knowledge, "_pdf_reader_class", lambda: BoomReader)
 
     assert knowledge._load_pdf(str(pdf)) == ""
+
+
+# --- Phase 7.1 sprint: confinement at the rebuild boundary, accurate reporting,
+#     write-failure safety and file permissions --------------------------------
+
+
+def test_knowledge_rebuild_skips_files_outside_docs_root(monkeypatch, tmp_path):
+    """A path that escapes discovery must still be refused at the rebuild boundary."""
+    docs = _point_docs_at(monkeypatch, tmp_path)
+    (docs / "inside.md").write_text("dijkstra shortest path", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("OUTSIDE_SENTINEL_SECRET", encoding="utf-8")
+
+    def leaked_discovery():
+        # Simulate a discovery regression: an out-of-root path escapes filtering.
+        return [str(docs / "inside.md"), str(outside)]
+
+    monkeypatch.setattr(knowledge, "_list_documents", leaked_discovery)
+
+    knowledge.rebuild_knowledge_base()
+
+    saved = json.loads(_index_path(tmp_path).read_text(encoding="utf-8"))
+    assert all("OUTSIDE_SENTINEL_SECRET" not in entry["text"] for entry in saved["entries"])
+    assert len(saved["entries"]) == 1
+
+
+def test_knowledge_rebuild_reports_only_files_that_yielded_text(monkeypatch, tmp_path):
+    docs = _point_docs_at(monkeypatch, tmp_path)
+    (docs / "real.md").write_text("dijkstra shortest path", encoding="utf-8")
+    (docs / "empty.md").write_text("   \n\t  ", encoding="utf-8")
+
+    msg = knowledge.rebuild_knowledge_base()
+
+    assert "indexed 1 chunks from 1 files" in msg
+    assert "empty.md" not in msg
+
+
+def test_knowledge_rebuild_reports_when_no_text_can_be_extracted(monkeypatch, tmp_path):
+    docs = _point_docs_at(monkeypatch, tmp_path)
+    (docs / "blank.md").write_text("   \n\t  ", encoding="utf-8")
+
+    msg = knowledge.rebuild_knowledge_base()
+
+    assert "could not extract any text" in msg
+    assert not _index_path(tmp_path).exists()
+
+
+def test_knowledge_index_file_is_written_owner_only(monkeypatch, tmp_path):
+    docs = _point_docs_at(monkeypatch, tmp_path)
+    (docs / "a.md").write_text("dijkstra shortest path", encoding="utf-8")
+    index_file = _index_path(tmp_path)
+
+    knowledge.rebuild_knowledge_base()
+
+    assert index_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_knowledge_rebuild_write_failure_cleans_up_and_keeps_index(monkeypatch, tmp_path):
+    docs = _point_docs_at(monkeypatch, tmp_path)
+    (docs / "a.md").write_text("dijkstra shortest path " * 200, encoding="utf-8")
+    index_file = _index_path(tmp_path)
+
+    knowledge.rebuild_knowledge_base()
+    original = index_file.read_bytes()
+
+    real_dumps = json.dumps
+    calls = {"n": 0}
+
+    def flaky_dumps(obj, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:  # fail while streaming the second entry
+            raise OSError("simulated write failure")
+        return real_dumps(obj, *args, **kwargs)
+
+    monkeypatch.setattr(knowledge.json, "dumps", flaky_dumps)
+
+    msg = knowledge.rebuild_knowledge_base()
+
+    assert "something went wrong" in msg
+    assert index_file.read_bytes() == original
+    leftovers = [p.name for p in tmp_path.iterdir() if ".tmp" in p.name]
+    assert not leftovers, f"temporary files left behind: {leftovers}"
