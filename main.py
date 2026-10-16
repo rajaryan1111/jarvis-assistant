@@ -138,39 +138,58 @@ def listen(timeout=6, phrase_time_limit=8) -> str:
 
 
 # ================== MEMORY ==================
+def _empty_memory():
+    return {
+        "notes": [],
+        "profile": {},
+        "favorites": {},
+        "smarthome": {},
+        "reminders": [],
+        "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
+        "plans": [],
+    }
+
+
+def _quarantine_unreadable_memory(exc: Exception) -> None:
+    """Set an unparseable memory file aside so the owner's data is never destroyed.
+
+    ``load_memory`` falls back to an empty structure when the file cannot be understood;
+    without this the next ``save_memory`` would overwrite the file and erase real notes,
+    reminders and profile. The file is renamed (recoverable), never deleted.
+    """
+    backup = Path(f"{MEMORY_FILE}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        os.replace(MEMORY_FILE, backup)
+    except OSError:
+        print("Memory load error:", type(exc).__name__, "(could not set the unreadable file aside)")
+        return
+    print(f"Memory file was unreadable ({type(exc).__name__}); moved it to {backup.name} and started fresh.")
+
+
 def load_memory():
     if not os.path.exists(MEMORY_FILE):
-        return {
-            "notes": [],
-            "profile": {},
-            "favorites": {},
-            "smarthome": {},
-            "reminders": [],
-            "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
-            "plans": [],
-        }
+        return _empty_memory()
     try:
-        with open(MEMORY_FILE, "r") as f:
+        # utf-8 is pinned: the file may hold any language, and the locale default is not.
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Make sure all keys exist even for old files
-            data.setdefault("notes", [])
-            data.setdefault("profile", {})
-            data.setdefault("favorites", {})
-            data.setdefault("smarthome", {})
-            data.setdefault("reminders", [])
-            data.setdefault("security", {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60})
-            data.setdefault("plans", [])
-            return data
+        if not isinstance(data, dict):
+            raise ValueError("memory file is not a JSON object")
+        # Make sure all keys exist even for old files
+        data.setdefault("notes", [])
+        data.setdefault("profile", {})
+        data.setdefault("favorites", {})
+        data.setdefault("smarthome", {})
+        data.setdefault("reminders", [])
+        data.setdefault("security", {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60})
+        data.setdefault("plans", [])
+        return data
+    except ValueError as exc:
+        # UnicodeDecodeError / JSONDecodeError / wrong shape: preserve, then start fresh.
+        _quarantine_unreadable_memory(exc)
+        return _empty_memory()
     except Exception:
-        return {
-            "notes": [],
-            "profile": {},
-            "favorites": {},
-            "smarthome": {},
-            "reminders": [],
-            "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
-            "plans": [],
-        }
+        return _empty_memory()
 
 
 _memory_lock = threading.RLock()

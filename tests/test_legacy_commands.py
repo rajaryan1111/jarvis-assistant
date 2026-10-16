@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 
@@ -216,3 +217,31 @@ def test_knowledge_base_degrades_without_rag_extra(monkeypatch, tmp_path):
     monkeypatch.setattr(knowledge, "_get_model", missing)
     assert "cannot build the knowledge base" in knowledge.rebuild_knowledge_base()
     assert not (tmp_path / "index.json").exists()
+
+
+# ============================================================ memory file robustness
+def test_unreadable_memory_file_is_preserved_not_silently_wiped(legacy, monkeypatch, tmp_path, capsys):
+    """An existing but unreadable memory.json must be set aside, never silently replaced
+    by an empty structure: the next save would erase the owner's notes and reminders."""
+    target = tmp_path / "memory.json"
+    original = b'{"notes": ["\xff\xfe not utf-8"]}'
+    target.write_bytes(original)
+    monkeypatch.setattr(legacy, "MEMORY_FILE", str(target))
+
+    mem = legacy.load_memory()
+
+    assert mem["notes"] == []  # the app still starts
+    assert not target.exists()  # ...but the unreadable file is no longer the live one
+    preserved = list(tmp_path.glob("memory.json.unreadable-*"))
+    assert preserved and preserved[0].read_bytes() == original  # owner's data survives
+    assert "unreadable" in capsys.readouterr().out
+
+
+def test_memory_file_round_trips_non_ascii_notes(legacy, monkeypatch, tmp_path):
+    """Non-ASCII notes must load correctly: the read is pinned to utf-8, not the locale."""
+    target = tmp_path / "memory.json"
+    notes = ["क्रिकेट टिप्पणी — café", "日本語のメモ"]
+    target.write_text(json.dumps({"notes": notes}, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(legacy, "MEMORY_FILE", str(target))
+
+    assert legacy.load_memory()["notes"] == notes
