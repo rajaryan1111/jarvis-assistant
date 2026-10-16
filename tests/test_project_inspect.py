@@ -25,6 +25,7 @@ from ultron.agent.provider import ModelTurn, ToolCall
 from ultron.agent.runtime import AgentRuntime
 from ultron.security.policy import Channel, CommandContext, RiskTier
 from ultron.tools.paths import (
+    MAX_RELATIVE_PATH_CHARS,
     PathPolicyError,
     is_sensitive_path,
     read_confined_text,
@@ -624,3 +625,50 @@ def test_inspect_refuses_direct_targeting_of_ignored_directories(tmp_path):
     assert ".git" not in scan.data["structure"]["directories"]
     assert "node_modules" not in scan.data["structure"]["directories"]
     assert fake_secret not in str(scan.data)
+
+
+@pytest.mark.parametrize("bad", [
+    42,                     # not a string
+    None,
+    ["docs"],
+    "a" * (MAX_RELATIVE_PATH_CHARS + 1),   # over the length bound
+    "docs/\x00etc",          # NUL and control characters
+    "docs\nnewline",
+    "docs/\x7f",
+    "/etc/passwd",           # absolute
+    "~/secrets",             # home expansion
+    "..\\..\\windows",       # backslash separators
+    "C:boot.ini",            # drive letter
+    "\\\\server\\share",     # UNC
+])
+def test_resolve_confined_path_rejects_every_non_relative_shape(tmp_path, bad):
+    """Each rejection branch of the confined-path resolver is a security boundary."""
+    root = resolve_project_root(tmp_path)
+    with pytest.raises(PathPolicyError):
+        resolve_confined_path(root, bad)
+
+
+def test_resolve_confined_path_refuses_a_symlink_inside_the_path(tmp_path):
+    """A link planted mid-path must not be followed out of the authorized root."""
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("OUTSIDE SECRET", encoding="utf-8")
+    (root / "docs" / "link").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(PathPolicyError):
+        resolve_confined_path(root, "docs/link/secret.txt")
+    # ...and the tool layer reports it as a refusal, not a read.
+    assert "OUTSIDE SECRET" not in ProjectInspectTool(root=root, runner=FakeRunner()).run(
+        {"path": "docs/link/secret.txt"}).message
+
+
+def test_resolve_confined_path_still_accepts_a_legitimate_deep_path(tmp_path):
+    """The guard must not reject ordinary work: nested real directories still resolve."""
+    root = tmp_path / "repo"
+    target = root / "docs" / "sub"
+    target.mkdir(parents=True)
+    assert resolve_confined_path(root, "docs/sub") == target.resolve()
+    assert resolve_confined_path(root, ".") == resolve_project_root(root)
+    assert resolve_confined_path(root, "") == resolve_project_root(root)

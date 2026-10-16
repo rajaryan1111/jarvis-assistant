@@ -37,6 +37,7 @@ from ultron.tools.macos import (
     SpeakTool,
     VolumeTool,
 )
+from ultron.tools.paths import read_confined_text
 from ultron.tools.process import run_command
 
 FAKE_SECRET = "sk-" + "Zq7" * 8  # credential-shaped, built at runtime
@@ -362,3 +363,74 @@ def test_cli_security_disable_requires_explicit_confirmation(monkeypatch, tmp_pa
     assert cli.main(["security", "disable", "--yes"]) == 0
     assert json.loads(path.read_text())["security"]["enabled"] is False
     assert "restart" in capsys.readouterr().out.lower()
+
+
+# ============================================================ read_confined_text
+def _repo(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    return root
+
+
+def test_read_confined_text_returns_redacted_text_inside_root(tmp_path):
+    root = _repo(tmp_path)
+    target = root / "notes.md"
+    target.write_text(f"token {FAKE_SECRET}\nplain line\n", encoding="utf-8")
+    text, err = read_confined_text(root, target)
+    assert err is None
+    assert "plain line" in text and FAKE_SECRET not in text and "[REDACTED]" in text
+
+
+def test_read_confined_text_refuses_symlinks(tmp_path):
+    root = _repo(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE SECRET", encoding="utf-8")
+    (root / "link.md").symlink_to(outside)
+    assert read_confined_text(root, root / "link.md") == (None, "symlink")
+
+
+def test_read_confined_text_refuses_paths_outside_root(tmp_path):
+    root = _repo(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("OUTSIDE SECRET", encoding="utf-8")
+    text, err = read_confined_text(root, outside)
+    assert (text, err) == (None, "outside_root")
+
+
+def test_read_confined_text_refuses_sensitive_names(tmp_path):
+    root = _repo(tmp_path)
+    for name in (".env", "secrets.json", "id_rsa"):
+        target = root / name
+        target.write_text("SENSITIVE", encoding="utf-8")
+        assert read_confined_text(root, target) == (None, "sensitive"), name
+
+
+def test_read_confined_text_refuses_directories_and_oversized_files(tmp_path):
+    root = _repo(tmp_path)
+    (root / "sub").mkdir()
+    assert read_confined_text(root, root / "sub") == (None, "not_a_file")
+
+    big = root / "big.txt"
+    big.write_text("x", encoding="utf-8")
+    assert read_confined_text(root, big, max_bytes=0) == (None, "oversized")
+
+
+def test_read_confined_text_refuses_an_unreadable_file(tmp_path):
+    root = _repo(tmp_path)
+    target = root / "locked.md"
+    target.write_text("secret", encoding="utf-8")
+    os.chmod(target, 0)
+    try:
+        if os.getuid() == 0:  # root ignores the mode bits; the refusal is untestable here
+            pytest.skip("running as root: permission bits are not enforced")
+        assert read_confined_text(root, target) == (None, "unreadable")
+    finally:
+        os.chmod(target, stat.S_IRUSR | stat.S_IWUSR)
+
+
+def test_read_confined_text_refuses_an_invalid_root(tmp_path):
+    root = _repo(tmp_path)
+    target = root / "notes.md"
+    target.write_text("ok", encoding="utf-8")
+    missing = tmp_path / "no-such-root"
+    assert read_confined_text(missing, target) == (None, "invalid_root")

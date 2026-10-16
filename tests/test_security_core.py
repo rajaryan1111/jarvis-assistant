@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import os
 import stat
@@ -18,7 +19,7 @@ from ultron.config import (
 )
 from ultron.security.confirmation import ConfirmationError, ConfirmationStore
 from ultron.security.policy import Channel, CommandContext, Decision, RiskTier, evaluate
-from ultron.security.redact import REDACTED, RedactingFilter, redact
+from ultron.security.redact import REDACTED, RedactingFilter, install_log_redaction, redact
 from ultron.security.sessions import LoginThrottle, SessionSigner, UsedNonces
 from ultron.security.tokens import MIN_TOKEN_LENGTH, generate_token, load_api_token, write_token_file
 
@@ -360,3 +361,62 @@ def test_redacting_log_filter(caplog):
     with caplog.at_level(logging.INFO, logger="ultron.test.redact"):
         logger.info("token is %s", token)
     assert token not in caplog.text and REDACTED in caplog.text
+
+
+def test_redacting_log_filter_also_masks_secrets_inside_tracebacks(caplog):
+    """A provider exception can carry a keyed URL; the traceback must be masked too.
+
+    The filter redacts ``record.exc_text`` and drops ``exc_info`` so the formatter emits
+    the masked traceback - without this the raw exception text reaches every log line.
+    """
+    token = "sk-" + "livekeyvalue1234567890"
+    logger = logging.getLogger("ultron.test.redact.exc")
+    logger.addFilter(RedactingFilter(extra_secrets=(token,)))
+    try:
+        raise RuntimeError(f"GET https://api.example/x?api_key={token} failed")
+    except RuntimeError:
+        with caplog.at_level(logging.ERROR, logger="ultron.test.redact.exc"):
+            logger.error("provider call failed", exc_info=True)
+    assert token not in caplog.text
+    assert REDACTED in caplog.text
+    assert "Traceback" in caplog.text  # the traceback is still there, just masked
+
+
+def test_redacting_log_filter_never_crashes_on_an_unformattable_record():
+    """Logging must not take the app down because a record cannot be formatted."""
+
+    class Exploding:
+        def __str__(self):
+            raise ValueError("boom")
+
+    record = logging.LogRecord("ultron.test", logging.INFO, __file__, 1, "value %s", (Exploding(),), None)
+    assert RedactingFilter().filter(record) is True
+
+
+def test_install_log_redaction_attaches_one_filter_per_handler_and_is_idempotent():
+    """The install step is the only thing standing between a secret and the log file."""
+    root = logging.getLogger()
+    saved = [(handler, list(handler.filters)) for handler in root.handlers]
+    handler = logging.StreamHandler(io.StringIO())
+    root.addHandler(handler)
+    try:
+        first = install_log_redaction()
+        assert isinstance(first, RedactingFilter)
+        installed = [f for f in handler.filters if isinstance(f, RedactingFilter)]
+        assert len(installed) == 1, "the filter must be attached exactly once"
+
+        install_log_redaction()  # calling it again must not stack duplicate filters
+        assert len([f for f in handler.filters if isinstance(f, RedactingFilter)]) == 1
+
+        # The value is passed as an extra secret, so this test exercises the install step
+        # itself rather than any key-shape heuristic. (An earlier draft used an sk- prefixed
+        # fixture and the repository's own secret scanner correctly rejected it.)
+        secret = "not-a-real-" + "tokenvalue1234"
+        install_log_redaction(extra_secrets=(secret,))
+        logging.getLogger("ultron.test.install").warning("token %s", secret)
+        assert secret not in handler.stream.getvalue()
+        assert REDACTED in handler.stream.getvalue()
+    finally:
+        root.removeHandler(handler)
+        for saved_handler, filters in saved:  # leave global logging exactly as we found it
+            saved_handler.filters = filters
