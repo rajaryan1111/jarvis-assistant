@@ -102,13 +102,16 @@ def _capture_frame_from_camera(timeout_sec: float = 5.0):
     start = time.time()
     frame = None
 
-    # Give camera some time to adjust exposure and actually return frames
-    while time.time() - start < timeout_sec:
-        ret, frame = cap.read()
-        if ret and frame is not None:
-            break
-
-    cap.release()
+    # Give camera some time to adjust exposure and actually return frames. The
+    # release is in a finally so a read() that raises (device unplugged, driver
+    # error) cannot leak the capture handle.
+    try:
+        while time.time() - start < timeout_sec:
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                break
+    finally:
+        cap.release()
 
     if frame is None:
         print("[vision] Failed to capture frame from webcam.")

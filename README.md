@@ -133,6 +133,33 @@ signed-in HUD** with the CONFIRM button. No code is spoken, and "confirm" by voi
 (or a recording of one) is not proof of who is speaking. `ULTRON_VOICE_TRUST=observe` limits voice to read-only
 answers. Details: [voice trust model](docs/M1_2_IDENTITY_SESSIONS_VOICE.md#5-voice-trust-model).
 
+#### English, Hindi and Hinglish
+
+`ULTRON_VOICE_LANGUAGE` selects the recognition locale: `en` (default, the historical behaviour), `hi`,
+`hinglish`, or `auto`. Recognition, language handling, response generation and speech output are separate
+stages in `ultron/voice/`, so each can be tested without a microphone:
+
+* **Devanagari** text is classified Hindi; romanised Hindi with at least two marker words is Hinglish;
+  anything else stays English (the safe default). There is **no Hinglish locale** — romanised Hindi is
+  recognised with `en-IN` and classified from the transcript.
+* Saying **"switch to hindi"** (or English/Hinglish) changes the language for the rest of the session and is
+  confirmed aloud. The switch is parsed strictly, so an ordinary question like *"how do I say water in
+  hindi"* still reaches the normal command router.
+* `auto` follows what it hears from the **next** turn onwards — the one-turn locale lag is deliberate.
+* Failures are typed (`unavailable`, `timeout`, `no_match`, `error`) and spoken as a short reason; no raw
+  recogniser text or exception is ever printed. The TTS voice is your configured `say` voice and is **not**
+  auto-selected per language.
+
+### Tasks that survive a restart
+
+`ultron/tasks.py` keeps a bounded, validated list of tasks under `ULTRON_DATA_DIR` (`tasks.json`, written
+`0600` through the shared atomic writer). A task left running by a process that died is reported as
+`interrupted` on the next start, and `main.py` says so at boot — nothing is re-run. **Resuming restores
+context only**: a task whose steps could send messages, change or delete files, or spend money must be
+explicitly confirmed before it continues, the confirmation is recorded, and a fresh interruption clears it.
+A corrupt or schema-invalid file is moved aside as `tasks.json.unreadable-<timestamp>` rather than silently
+overwriting your data.
+
 ### Multi-step requests (agent loop)
 
 With a model configured (`OPENAI_API_KEY`, `ULTRON_PROVIDER=groq` with `GROQ_API_KEY`, or `ULTRON_PROVIDER=ollama`
@@ -239,6 +266,7 @@ uv run pytest -q                      # unit + HTTP security tests; never shuts 
 uv run ruff check .
 uv run python -m ultron check-secrets
 uv run python -m compileall -q -x '/\.venv/' .
+python scripts/verify.py              # all of the above in one command, PASS/FAIL summary, non-zero exit on failure
 ```
 
 The normal suite never contacts OpenAI or Groq. The live tests (`tests/live/`) are skipped unless you opt in
@@ -252,6 +280,12 @@ ULTRON_LIVE_GROQ=1   uv run pytest tests/live -p no:cacheprovider   # GROQ_API_K
 CI runs the normal checks on Python 3.10–3.13 (Ubuntu), never the live tests. The tests use fake command runners and temporary
 directories. They can't verify macOS behaviour (`say`, `osascript`, camera, microphone, TCC permissions).
 See the M1 report for what was verified where.
+
+For the Mac itself: **[docs/MAC_SMOKE_TEST.md](docs/MAC_SMOKE_TEST.md)** is the reproducible device checklist
+(microphone, wake word, English/Hindi/Hinglish, TTS, provider errors and timeouts, memory and task recovery
+after a real restart, camera, system controls, permission-denied behaviour) with the exact expected output for
+each step. **[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)** is the prioritized release status and
+says plainly what is still unverified.
 
 ## Troubleshooting
 
@@ -291,6 +325,8 @@ ultron/
   security/           tokens, sessions, risk policy, confirmations, redaction, secret scanner
   tools/              tool interface with risk metadata, registry, macOS system tools
   agent/              bounded agent loop: schema checks, tool catalog, OpenAI adapter, runtime
+  voice/              speech recognition, language handling (en/hi/hinglish) and the voice pipeline
+  tasks.py            bounded, validated, resumable task state
   legacy.py           adapter between the API and main.py
   cli.py              `ultron` command (serve, token, open-hud, doctor, check-secrets, agent)
 templates/, static/   HUD + login page
@@ -300,7 +336,9 @@ news.py               NewsAPI integration
 wakeword_listener.py  optional Porcupine wake word
 jarvis_logic.py       thin wrapper around main.handle_command
 tests/                pytest suite
-docs/                 architecture audit, M1/M1.1/M1.2/M2.0/M2.1/M2.2 reports, credential rotation guide
+scripts/verify.py     one-command verification battery
+docs/                 architecture audit, M1/M1.1/M1.2/M2.0–M2.6 reports, Mac smoke test,
+                      release checklist, credential rotation guide
 ```
 
 ## Limitations

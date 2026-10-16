@@ -641,20 +641,20 @@ def system_report() -> str:
     try:
         cpu = psutil.cpu_percent()
     except Exception as e:
-        print("CPU percent error:", e)
+        print("CPU percent error:", redact(e))
         cpu = None
 
     try:
         ram = psutil.virtual_memory().percent
     except Exception as e:
-        print("RAM percent error:", e)
+        print("RAM percent error:", redact(e))
         ram = None
 
     try:
         bat = psutil.sensors_battery()
         bat_str = f"{bat.percent}%" if bat else "N/A"
     except Exception as e:
-        print("Battery read error:", e)
+        print("Battery read error:", redact(e))
         bat_str = "N/A"
 
     temp = get_cpu_temperature()
@@ -1063,13 +1063,13 @@ def reminder_watcher():
                     else:
                         remaining.append(r)
                 except Exception as e:
-                    print("Reminder item error:", e)
+                    print("Reminder item error:", redact(e))
 
             if len(remaining) != len(rlist):
                 memory["reminders"] = remaining
                 save_memory(memory)
         except Exception as e:
-            print("Reminder watcher loop error:", e)
+            print("Reminder watcher loop error:", redact(e))
 
 
 # ================== SECURITY MODE (AI SECURITY) ==================
@@ -1229,7 +1229,7 @@ def intruder_watcher():
                 continue
             intruder_check_once()
         except Exception as e:
-            print("Intruder watcher error:", e)
+            print("Intruder watcher error:", redact(e))
 
 
 # ================== STUDY PLANNER (AUTONOMOUS TASK PLANNER) ==================
@@ -1418,7 +1418,7 @@ def start_background_services() -> bool:
             try:
                 Thread(target=target, name=name, daemon=True).start()
             except Exception as e:
-                print(f"{name} start error:", e)
+                print(f"{name} start error:", redact(e))
         _background_started = True
         return True
 
@@ -2091,7 +2091,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
             cpu = psutil.cpu_percent()
             return f"Current CPU usage is {cpu} percent, sir."
         except Exception as e:
-            print("CPU usage error:", e)
+            print("CPU usage error:", redact(e))
             return "I could not read the CPU usage, sir."
 
     if "temperature" in cmd or "overheating" in cmd or "too hot" in cmd:

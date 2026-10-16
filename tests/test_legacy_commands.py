@@ -245,3 +245,36 @@ def test_memory_file_round_trips_non_ascii_notes(legacy, monkeypatch, tmp_path):
     monkeypatch.setattr(legacy, "MEMORY_FILE", str(target))
 
     assert legacy.load_memory()["notes"] == notes
+
+
+def test_system_stat_failures_do_not_print_raw_exception_text(legacy, monkeypatch, capsys):
+    """A failing system-stat read must not echo the exception text to the terminal.
+
+    ``main`` printed raw exception text on several legacy error paths. Exception text can
+    carry paths, URLs and (with a network library in the chain) credentials, so it is now
+    redacted before printing. The user-visible answer is unchanged.
+    """
+    secret = "sk-" + "Zq7" * 8  # credential-shaped, built at runtime
+
+    class Exploding:
+        def cpu_percent(self, *a, **k):
+            raise RuntimeError(f"read failed for https://h/?api_key={secret}")
+
+        def virtual_memory(self):
+            raise RuntimeError(f"ram failed with {secret}")
+
+        def sensors_battery(self):
+            raise RuntimeError(f"battery failed with {secret}")
+
+    monkeypatch.setattr(legacy, "psutil", Exploding())
+    from ultron.security.policy import CommandContext
+
+    ctx = CommandContext.local_voice()
+    # "cpu usage" is its own branch; "system status" builds the whole report and so
+    # exercises the CPU/RAM/battery reads inside system_report().
+    for phrase in ("cpu usage", "system status"):
+        reply = legacy.handle_command(phrase, ctx)
+        assert reply, phrase
+    printed = capsys.readouterr().out
+    assert secret not in printed, "a credential-shaped value reached the terminal"
+    assert "[REDACTED]" in printed
