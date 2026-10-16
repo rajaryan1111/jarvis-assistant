@@ -2234,9 +2234,31 @@ def _voice_responder(text: str, ctx) -> str:
     return handle_command(text, ctx)
 
 
+def report_interrupted_tasks() -> list:
+    """Tell the owner which saved tasks were interrupted by the last shutdown.
+
+    Recovery only restores context: nothing is re-executed here, and a task that could
+    take a real-world action is not made runnable until it is confirmed again.
+    """
+    try:
+        from ultron.tasks import TaskStore
+
+        store = TaskStore.for_env()
+        interrupted = store.recover()
+    except Exception as e:  # a broken task file must never stop JARVIS from starting
+        print("Could not read saved tasks:", redact(e))
+        return []
+    for task in interrupted:
+        print(f"Interrupted task: {task.title} (nothing was re-run; say 'resume task' to continue)")
+    for moved in store.quarantined:
+        print(f"Saved task state was unusable and was moved to {moved.name}; starting with no saved tasks.")
+    return interrupted
+
+
 def main():
     load_dotenv_if_enabled()
     start_background_services()
+    report_interrupted_tasks()
     ctx = CommandContext.local_voice()  # the person at this machine's microphone
     # Boot voice: Tony-ish
     speak("JARVIS system initializing. Welcome back, sir. You can ask me anything.", ctx)
