@@ -32,7 +32,7 @@ from ultron.voice.languages import (
     parse_language_command,
     profile_for,
 )
-from ultron.voice.transcribe import NO_MATCH, TIMEOUT, UNAVAILABLE, Transcription
+from ultron.voice.transcribe import ERROR, NO_MATCH, TIMEOUT, UNAVAILABLE, Transcription
 
 #: What the user hears when a stage fails. Kept short and free of technical detail.
 FAILURE_MESSAGES = {
@@ -94,6 +94,32 @@ class VoicePipeline:
         return self._mode
 
     def run(self) -> VoiceTurn:
+        """One spoken turn. Never raises: a failing stage is reported as a turn.
+
+        ``run`` drives a ``while True`` loop in ``main.main()`` and in the wake-word
+        listener, so a stage that raises must become a spoken reason instead of killing
+        the assistant mid-conversation. ``responder`` is ``main.handle_command`` and
+        ``speaker`` shells out to ``say`` on macOS - neither may take the loop down.
+        Only the exception *type* is logged: provider, recogniser and shell text can echo
+        request details or part of a key, so it is never printed or returned.
+        """
+        try:
+            return self._run_stages()
+        except Exception as exc:  # noqa: BLE001 - a stage failure is a turn, not a crash
+            print("Voice pipeline error:", type(exc).__name__)
+            reply = DEFAULT_FAILURE_MESSAGE
+            return VoiceTurn(language=self.language, mode=self._mode, error=ERROR,
+                             reply=reply, speak_status=self._safe_speak(reply))
+
+    def _safe_speak(self, reply: str) -> str:
+        """Speak a failure reason; a speaker that fails must not raise out of ``run``."""
+        try:
+            status = self._speaker(reply)
+        except Exception:  # noqa: BLE001 - the loop survives even a broken speaker
+            return ""
+        return status if isinstance(status, str) else ""
+
+    def _run_stages(self) -> VoiceTurn:
         locale = profile_for(self.language).stt_locale
         result: Transcription = self._transcriber.transcribe(locale=locale)
         if not result.ok:
@@ -119,6 +145,5 @@ class VoicePipeline:
         reply = self._responder(transcript)
         if not isinstance(reply, str) or not reply.strip():
             reply = EMPTY_REPLY_MESSAGE
-        status = self._speaker(reply)
         return VoiceTurn(transcript=transcript, reply=reply, language=detected, mode=self._mode,
-                         speak_status=status if isinstance(status, str) else "")
+                         speak_status=self._safe_speak(reply))

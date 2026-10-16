@@ -278,3 +278,97 @@ def test_system_stat_failures_do_not_print_raw_exception_text(legacy, monkeypatc
     printed = capsys.readouterr().out
     assert secret not in printed, "a credential-shaped value reached the terminal"
     assert "[REDACTED]" in printed
+
+
+def test_date_questions_are_answered_locally_not_sent_to_the_web(legacy):
+    """"What's the date" must be answered by the assistant itself.
+
+    The router had a `time` branch but no `date` branch, so every date question
+    fell through to the Wikipedia/AI path and came back as "Wikipedia is
+    unavailable right now." — a confusing failure for a question that needs no
+    network at all. These phrasings must all be answered offline.
+    """
+    import datetime
+
+    today = datetime.datetime.now()
+    expected_day = today.strftime("%A")
+    expected_date = today.strftime("%d %B %Y")
+    for phrase in ("what is the date", "what's the date today", "what day is it", "tell me the date"):
+        reply = legacy.handle_command(phrase)
+        assert expected_day in reply, (phrase, reply)
+        assert expected_date in reply, (phrase, reply)
+        assert "wikipedia" not in reply.lower(), (phrase, reply)
+        assert "openai" not in reply.lower(), (phrase, reply)
+
+
+def test_date_branch_does_not_swallow_unsupported_day_questions(legacy):
+    """The date branch must be explicit, not a bare "day" substring match.
+
+    "what day is my birthday party" has no feature behind it. Answering it with
+    today's date would be a confidently wrong answer, so it must fall through to
+    the normal path instead.
+    """
+    for phrase in ("what day is my birthday party", "what day is the meeting"):
+        reply = legacy.handle_command(phrase)
+        assert "Today is" not in reply, (phrase, reply)
+
+
+def test_time_question_still_answers_with_time_and_date(legacy):
+    """The existing `time` branch must keep returning time (and the date)."""
+    import datetime
+
+    now = datetime.datetime.now()
+    reply = legacy.handle_command("what time is it")
+    assert now.strftime("%I:%M %p") in reply, reply
+    assert now.strftime("%d %B %Y") in reply, reply
+
+
+def test_basic_courtesy_works_with_no_provider_configured(legacy):
+    """Greetings and thanks must be answered offline, with no API key at all.
+
+    A brand-new install has no provider key (that is the default `doctor` state), and
+    without these replies the assistant answered "My OpenAI key is not configured."
+    to "hello" — it could not even say good morning. These are deterministic and
+    need no network, so they must work on day one.
+    """
+    expected = {
+        "hello": "Hello",
+        "hi jarvis": "Hello",
+        "hey jarvis": "Hello",
+        "good morning": "morning",
+        "good afternoon": "afternoon",
+        "good evening": "evening",
+        "good night": "night",
+        "thank you": "welcome",
+        "thanks jarvis": "welcome",
+        "how are you": "well",
+        "who are you": "JARVIS",
+    }
+    for phrase, needle in expected.items():
+        reply = legacy.handle_command(phrase)
+        assert needle.lower() in reply.lower(), (phrase, reply)
+        assert "openai" not in reply.lower(), (phrase, reply)
+        assert "not configured" not in reply.lower(), (phrase, reply)
+
+
+def test_trivial_local_questions_are_answered_offline(legacy):
+    """"flip a coin" and "roll a dice" need no provider and no network."""
+    import re
+
+    coin = legacy.handle_command("flip a coin")
+    assert re.search(r"\b(heads|tails)\b", coin, re.I), coin
+    saw_tails = any(
+        re.search(r"\btails\b", legacy.handle_command("flip a coin"), re.I) for _ in range(12)
+    )
+    assert saw_tails, "a coin that never lands tails is not a coin"
+
+    dice = legacy.handle_command("roll a dice")
+    assert re.search(r"\b[1-6]\b", dice), dice
+
+
+def test_social_replies_do_not_swallow_real_commands(legacy):
+    """Matching is on the whole command, so real requests are never hijacked."""
+    for phrase in ("open hello kitty", "search for thank you notes", "play good morning"):
+        reply = str(legacy.handle_command(phrase))
+        assert not reply.lower().startswith("hello, sir"), (phrase, reply)
+        assert "you are welcome" not in reply.lower(), (phrase, reply)

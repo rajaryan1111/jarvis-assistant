@@ -33,7 +33,7 @@ Legend: ✅ done & verified · 🟡 done, unverified on target · ⬜ not starte
 | # | Item | Status | Evidence |
 |---|------|--------|----------|
 | P2.1 | Coverage of security-critical rejection branches | ✅ | `redact.py` 75%→98%, `tools/paths.py` 81%→90%; 24 new tests this sprint. |
-| P2.1b | Release-readiness audit defects | ✅ | Two real defects found and fixed test-first in `b7f70a5`: `vision.py` leaked the webcam handle when `cap.read()` raised (macOS would keep the capture/camera light on), and `main.py` echoed raw exception text on 8 legacy error paths. Both have regression tests; the second failed pre-fix with the secret visible in captured stdout. |
+| P2.1b | Release-readiness audit defects | ✅ | Fixed test-first: `vision.py` leaked the webcam handle when `cap.read()` raised (`b7f70a5`); `main.py` echoed raw exception text on 8 legacy error paths (`b7f70a5`); the date router had no `date` branch so "what's the date" fell through to Wikipedia; greetings needed an API key so a fresh install could not say hello; `VoicePipeline.run()` could raise and kill the voice loop; and the loop retried a missing microphone ~39,000 times a second (~875,000 log lines in 25 s), now backed off to ~1 per 5 s. Every one has a regression test that failed pre-fix. |
 | P2.2 | Configuration surface documented | ✅ | `.env.example` went from 8 to ~75 variables with verified real defaults. |
 | P2.3 | Real-device checklist | ✅ | `docs/MAC_SMOKE_TEST.md`, every claim checked against the code. |
 | P2.4 | One-command verification | ✅ | `scripts/verify.py` (5 checks, non-zero exit on failure). |
@@ -48,13 +48,13 @@ Legend: ✅ done & verified · 🟡 done, unverified on target · ⬜ not starte
 python scripts/verify.py          # pytest + ruff + compileall + check-secrets + diff --check
 ```
 
-Expected: `1302 passed, 21 skipped` (the 21 are the opt-in live-provider tests) and five
+Expected: `1313 passed, 21 skipped` (the 21 are the opt-in live-provider tests) and five
 PASS lines. CI runs the same set plus `uv sync --locked` across Python 3.10–3.13.
 
 The deterministic battery for the candidate tree (code commit `b7f70a5`), exactly as executed:
 
 ```bash
-ULTRON_SKIP_DOTENV=1 python -B -m pytest -p no:cacheprovider -q   # 1302 passed, 21 skipped
+ULTRON_SKIP_DOTENV=1 python -B -m pytest -p no:cacheprovider -q   # 1313 passed, 21 skipped
 ruff check --no-cache .                                            # clean
 python -m compileall -q -x '/\.venv/' .                            # clean
 python -B -m ultron check-secrets                                   # no hardcoded credentials
@@ -67,5 +67,5 @@ git diff --check; git status                                        # clean
 - No live provider, no macOS hardware, no microphone, no camera and no wake word has been
   exercised by this work. Voice results are **mock-tested only**.
 - No merge, no `main` change, no deployment and no force-push has been performed.
-- "1302 passed" describes the deterministic suite on the candidate tree `b7f70a5`, not device
+- "1313 passed" describes the deterministic suite on the candidate tree, not device
   behaviour.

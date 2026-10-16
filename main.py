@@ -6,6 +6,7 @@ import datetime
 import subprocess
 import urllib.parse
 import re
+import random
 import webbrowser
 import time
 import threading
@@ -40,6 +41,7 @@ from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
 from ultron.voice import GoogleTranscriber, VoicePipeline, normalise_mode, profile_for
+from ultron.voice.transcribe import UNAVAILABLE
 from ultron.voice.pipeline import FAILURE_MESSAGES, DEFAULT_FAILURE_MESSAGE
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
 from ultron.tools.macos import (
@@ -773,6 +775,12 @@ def take_screenshot(ctx: CommandContext = None) -> str:
 def tell_time() -> str:
     now = datetime.datetime.now()
     return f"It is {now.strftime('%I:%M %p on %A, %d %B %Y')}."
+
+
+def tell_date() -> str:
+    """Today's date, answered locally. No network, no provider, no failure mode."""
+    now = datetime.datetime.now()
+    return f"Today is {now.strftime('%A, %d %B %Y')}."
 
 
 # ================== STATUS FOR HUD ==================
@@ -1880,6 +1888,57 @@ def handle_confirmation_intents(cmd: str, ctx: CommandContext):
     return None
 
 
+# ================== SOCIAL REPLIES (work with no configuration) ==================
+# A brand-new install has no provider key — that is the default `doctor` state — and
+# without these the assistant answered "My OpenAI key is not configured." to "hello":
+# it could not even say good morning. These replies are deterministic and offline, so
+# basic courtesy and trivial local questions work on day one, before any key exists.
+
+_SOCIAL_FILLER = frozenset({"jarvis", "sir", "please"})
+
+_SOCIAL_REPLIES = {
+    "hello": "Hello, sir. What can I do for you?",
+    "hi": "Hello, sir. What can I do for you?",
+    "hey": "Hello, sir. What can I do for you?",
+    "good morning": "Good morning, sir. I hope you are well.",
+    "good afternoon": "Good afternoon, sir.",
+    "good evening": "Good evening, sir.",
+    "good night": "Good night, sir. Sleep well.",
+    "thank you": "You are welcome, sir.",
+    "thanks": "You are welcome, sir.",
+    "how are you": "I am running well, sir. All systems are nominal.",
+    "who are you": "I am JARVIS, your local assistant, sir.",
+    "what can you do": (
+        "I can tell the time and date, open apps and sites, set reminders and notes, "
+        "answer questions, and run tasks — all from this machine, sir."
+    ),
+}
+
+_COIN_PHRASES = frozenset({"flip a coin", "toss a coin", "heads or tails"})
+_DICE_PHRASES = frozenset({"roll a dice", "roll a die", "roll the dice", "roll dice"})
+
+
+def _social_reply(cmd: str) -> str | None:
+    """Deterministic offline reply for courtesy and trivial questions, else ``None``.
+
+    The *whole* command must match, so "open hello kitty" or "search for thank you
+    notes" can never be swallowed by a greeting. Anything that does not match falls
+    through to the normal router unchanged.
+    """
+    text = cmd.strip().lower()
+    text = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in text)
+    phrase = " ".join(w for w in text.split() if w not in _SOCIAL_FILLER)
+    if not phrase:
+        return None
+    if phrase in _SOCIAL_REPLIES:
+        return _SOCIAL_REPLIES[phrase]
+    if phrase in _COIN_PHRASES:
+        return f"It is {'heads' if random.random() < 0.5 else 'tails'}, sir."
+    if phrase in _DICE_PHRASES:
+        return f"You rolled a {random.randint(1, 6)}, sir."
+    return None
+
+
 # ================== MAIN COMMAND HANDLER ==================
 def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     """
@@ -1917,6 +1976,13 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     profile_reply = answer_profile_query(cmd)
     if profile_reply:
         return profile_reply
+
+    # Courtesy and trivial questions, answered offline. Placed after the profile
+    # branches so "what is my name" still wins, and matched on the whole command so
+    # no real request can be swallowed.
+    social = _social_reply(cmd)
+    if social is not None:
+        return social
 
     # Notes
     if cmd.startswith("remember that"):
@@ -2043,6 +2109,14 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     # Time / battery
     if "time" in cmd:
         return tell_time()
+
+    # A date question needs no network at all, so it must never fall through to
+    # the Wikipedia or provider path (which is what happened before this branch).
+    # The phrasings are explicit: a bare "day" would also swallow questions the
+    # assistant has no feature for (e.g. "what day is my birthday party"), and a
+    # confidently wrong answer is worse than an honest one.
+    if "date" in cmd or "what day is it" in cmd or "what day is today" in cmd or "which day" in cmd:
+        return tell_date()
 
     if "battery" in cmd:
         try:
@@ -2225,6 +2299,22 @@ def is_exit_command(text: str) -> bool:
     return text.strip().strip(".!?").lower() in _EXIT_PHRASES
 
 
+#: Seconds to wait before retrying when this machine has no voice input at all.
+VOICE_UNAVAILABLE_RETRY_SECONDS = 5.0
+
+
+def _voice_pause(turn) -> float:
+    """Seconds to wait before the next listening attempt.
+
+    Without a microphone - or without the optional ``voice`` extra, which is the
+    first-run mistake to expect - retrying instantly spins the CPU and floods the
+    terminal (measured at ~39,000 turns per second, ~875,000 log lines in 25 s), so
+    those turns back off. A turn that simply heard nothing, or could not make it out,
+    is a normal miss and is retried immediately.
+    """
+    return VOICE_UNAVAILABLE_RETRY_SECONDS if getattr(turn, "error", None) == UNAVAILABLE else 0.0
+
+
 def _voice_responder(text: str, ctx) -> str:
     """Command routing for a spoken turn: strip the wake word, then route or say goodbye."""
     if WAKE_WORD in text:
@@ -2276,6 +2366,10 @@ def main():
         spoken = turn.transcript.replace(WAKE_WORD, "").strip()
         if turn.reply == _VOICE_GOODBYE and is_exit_command(spoken):
             break
+        pause = _voice_pause(turn)
+        if pause:
+            # No usable voice input here: wait instead of spinning the CPU.
+            time.sleep(pause)
 
 
 if __name__ == "__main__":

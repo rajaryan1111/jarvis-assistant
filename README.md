@@ -126,6 +126,18 @@ uv run python main.py              # microphone loop (needs the voice extra); sa
 uv run python wakeword_listener.py # wake word; needs the server running, PICOVOICE_ACCESS_KEY and the client token
 ```
 
+`run_jarvis.command` starts the HUD. To also start the microphone loop in the same
+double-click, run `JARVIS_VOICE=1 ./run_jarvis.command` (or set `JARVIS_VOICE=1` inside
+the script). Voice needs the optional extra and a microphone permission; without them the
+loop says "Voice input is not available on this machine, sir." once every 5 seconds
+instead of spinning the CPU, and the HUD still works.
+
+**Works with no API key at all.** Courtesy and questions that need no network are
+answered locally, so a fresh install is usable on day one: "hello", "good morning",
+"thank you", "how are you", "who are you", "what can you do", "what is the date",
+"flip a coin", "roll a dice". A provider key is only needed for open-ended questions,
+the agent loop and the live-data tools (weather, news, cricket, web search).
+
 Voice stays the main way to use JARVIS: read-only and routine commands (time, weather, open apps, volume,
 notes, reminders, ...) just work. **High-impact actions** (shut down, restart, clear caches or all reminders,
 turn off security mode, replace your face) can be *requested* by voice but must be **approved in the

@@ -125,7 +125,7 @@ Vision is an optional extra and a prototype face check, **not** authentication.
 
 | # | Condition | Expect |
 |---|------|--------|
-| 8.1 | No microphone | typed `unavailable`; the CLI loop keeps running |
+| 8.1 | No microphone | typed `unavailable`; the CLI loop keeps running, and backs off ~5 s between attempts so it does not spin the CPU or flood the terminal |
 | 8.2 | No camera | typed failure; no crash, no bypass |
 | 8.3 | No Porcupine access key | the wake-word listener exits with a setup hint |
 | 8.4 | Server bound off-loopback without `ULTRON_ALLOW_NON_LOOPBACK` | refused at startup |
