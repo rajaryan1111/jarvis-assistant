@@ -22,6 +22,22 @@ DOCS_DIR = os.getenv("ULTRON_KNOWLEDGE_DIR") or os.path.join(_BASE_DIR, "knowled
 INDEX_FILE = os.getenv("ULTRON_KNOWLEDGE_INDEX") or os.path.join(_BASE_DIR, "knowledge_index.json")
 INSTALL_HINT = "Install the knowledge-base extra with: uv sync --extra rag (or pip install -e '.[rag]')."
 
+# Explicit resource bounds. A rebuild must stay bounded in files, bytes, chunks,
+# embedding work and index size even if knowledge_docs/ contains something
+# unexpected, and retrieved context must stay bounded before it reaches a model.
+# These are deliberate fixed limits, not configuration surface.
+MAX_FILES = 2000                  # documents scanned per rebuild
+MAX_FILE_BYTES = 8 * 1024 * 1024  # characters read per text document (8 MiB)
+MAX_PDF_PAGES = 1000              # pages parsed per PDF
+MAX_EXTRACTED_CHARS = 2_000_000   # extracted text kept per document
+MAX_CHUNKS_PER_DOC = 2000         # chunks kept per document
+MAX_TOTAL_CHUNKS = 10_000         # entries in one index
+MAX_INDEX_BYTES = 64 * 1024 * 1024  # index file size guard (64 MiB)
+MAX_EMBEDDING_DIMS = 4096         # longest embedding trusted at retrieval
+MAX_ENTRY_TEXT_CHARS = 50_000     # longest entry text trusted at retrieval
+MAX_CONTEXT_CHARS = 12_000        # total retrieved context handed to a model
+TOP_K = 4                         # chunks retrieved per question
+
 
 class RagUnavailable(RuntimeError):
     """Raised when the optional knowledge-base dependencies are not installed."""
@@ -78,6 +94,14 @@ def _pdf_reader_class():
     return PdfReader
 
 
+def _cap_extracted_text(text: str, path: str) -> str:
+    """Bound the extracted text kept per document."""
+    if len(text) > MAX_EXTRACTED_CHARS:
+        print(f"[KB] Extracted text capped at {MAX_EXTRACTED_CHARS} chars:", path)
+        return text[:MAX_EXTRACTED_CHARS]
+    return text
+
+
 def _load_pdf(path: str) -> str:
     PdfReader = _pdf_reader_class()
     if PdfReader is None:
@@ -87,10 +111,13 @@ def _load_pdf(path: str) -> str:
         with open(path, "rb") as f:
             reader = PdfReader(f)
             texts = []
-            for page in reader.pages:
+            for page_number, page in enumerate(reader.pages, start=1):
+                if page_number > MAX_PDF_PAGES:
+                    print("[KB] PDF page cap reached:", path)
+                    break
                 t = page.extract_text() or ""
                 texts.append(t)
-        return "\n".join(texts)
+        return _cap_extracted_text("\n".join(texts), path)
     except Exception as e:
         print("[KB] PDF read error:", path, type(e).__name__)
         return ""
@@ -99,7 +126,10 @@ def _load_pdf(path: str) -> str:
 def _load_textfile(path: str) -> str:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
+            data = f.read(MAX_FILE_BYTES)
+            if f.read(1):
+                print(f"[KB] File capped at {MAX_FILE_BYTES} chars:", path)
+        return data
     except Exception as e:
         print("[KB] Text read error:", path, type(e).__name__)
         return ""
@@ -145,30 +175,41 @@ def rebuild_knowledge_base(openai_client=None):
     Re-scan all docs in knowledge_docs/ and rebuild vector index.
     OFFLINE: uses local sentence-transformers model; ignores openai_client.
     """
-    files = _list_documents()
+    files = sorted(_list_documents())
     if not files:
         return (
             "I did not find any files in the 'knowledge_docs' folder, sir. "
             "Place your PDFs or notes there and say reload my knowledge again."
         )
 
+    if len(files) > MAX_FILES:
+        print(f"[KB] File cap reached: indexing the first {MAX_FILES} of {len(files)} documents.")
+        files = files[:MAX_FILES]
+
     print("[KB] Rebuilding knowledge index from files:", files)
 
     all_entries = []
 
     for path in files:
+        if len(all_entries) >= MAX_TOTAL_CHUNKS:
+            print(f"[KB] Chunk cap reached at {MAX_TOTAL_CHUNKS} entries; remaining documents skipped.")
+            break
         ext = os.path.splitext(path)[1].lower()
         if ext == ".pdf":
             raw = _load_pdf(path)
         else:
             raw = _load_textfile(path)
+        raw = _cap_extracted_text(raw, path)
 
         if not raw.strip():
             continue
 
-        chunks = _chunk_text(raw, chunk_size=1200, overlap=200)
+        chunks = _chunk_text(raw, chunk_size=1200, overlap=200)[:MAX_CHUNKS_PER_DOC]
         print(f"[KB] {path}: {len(chunks)} chunks")
         for idx, ch in enumerate(chunks, start=1):
+            if len(all_entries) >= MAX_TOTAL_CHUNKS:
+                print(f"[KB] Chunk cap reached at {MAX_TOTAL_CHUNKS} entries; remaining documents skipped.")
+                break
             all_entries.append(
                 {
                     "source": path,
@@ -198,9 +239,16 @@ def rebuild_knowledge_base(openai_client=None):
         entry["embedding"] = [float(x) for x in emb]
 
     data = {"entries": all_entries}
+    payload = json.dumps(data)
+    if len(payload.encode("utf-8")) > MAX_INDEX_BYTES:
+        print("[KB] Index size cap reached:", len(payload), "bytes")
+        return (
+            "The knowledge index would be too large to save, sir. "
+            "Please remove or split some documents and try again."
+        )
     try:
         # Atomic replace: a failed or interrupted rebuild keeps the previous index usable.
-        atomic_write_text(Path(INDEX_FILE), json.dumps(data))
+        atomic_write_text(Path(INDEX_FILE), payload)
     except Exception as e:
         print("[KB] Failed to save index:", type(e).__name__)
         return "I tried to save the knowledge index, but something went wrong, sir."
@@ -212,6 +260,9 @@ def _load_index():
     if not os.path.exists(INDEX_FILE):
         return None
     try:
+        if os.path.getsize(INDEX_FILE) > MAX_INDEX_BYTES:
+            print("[KB] Index file exceeds the size cap; ignoring it:", INDEX_FILE)
+            return None
         with open(INDEX_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
@@ -246,7 +297,9 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
         print("[KB] Question embedding error:", type(e).__name__)
         return "I tried to search your knowledge base, but the local embedding step failed, sir."
 
-    # Score each chunk
+    # Score each chunk. Index entries are untrusted on-disk data: shape, embedding
+    # dimension, finite numeric values and text length are validated before ranking.
+    q_dim = len(q_emb)
     scored = []
     for e in entries:
         if not isinstance(e, dict):
@@ -257,14 +310,23 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
         if (
             not isinstance(emb, list)
             or not emb
+            or len(emb) != q_dim
+            or len(emb) > MAX_EMBEDDING_DIMS
             or not isinstance(source, str)
             or not source.strip()
             or not isinstance(text, str)
             or not text.strip()
+            or len(text) > MAX_ENTRY_TEXT_CHARS
         ):
             continue
         try:
-            score = _cosine_similarity(q_emb, emb)
+            values = [float(x) for x in emb]
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(v) for v in values):
+            continue
+        try:
+            score = _cosine_similarity(q_emb, values)
         except (TypeError, ValueError):
             continue
         scored.append((score, e))
@@ -273,15 +335,22 @@ def answer_from_knowledge(question: str, openai_client=None, model: str = DEFAUL
         return "Your knowledge index seems empty or corrupted, sir."
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    top_k = scored[:4]
+    top_k = scored[:TOP_K]
 
-    # Build context for GPT
+    # Build context for GPT, bounded so retrieved text cannot flood the prompt.
     context_parts = []
+    budget = MAX_CONTEXT_CHARS
     for i, (score, e) in enumerate(top_k, start=1):
+        if budget <= 0:
+            print("[KB] Retrieved-context cap reached; some chunks were dropped.")
+            break
         src = os.path.basename(e["source"])
         chunk_id = e.get("chunk_id")
         label = f"{src}#chunk-{chunk_id}" if isinstance(chunk_id, int) else src
         snippet = e["text"].strip()
+        if len(snippet) > budget:
+            snippet = snippet[:budget]
+        budget -= len(snippet)
         context_parts.append(f"[Source {i} - {label}]\n{snippet}\n")
     context = "\n\n".join(context_parts)
 
