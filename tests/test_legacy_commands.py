@@ -342,7 +342,7 @@ def test_basic_courtesy_works_with_no_provider_configured(legacy):
         "thank you": "welcome",
         "thanks jarvis": "welcome",
         "how are you": "well",
-        "who are you": "JARVIS",
+        "who are you": "ULTRON",
     }
     for phrase, needle in expected.items():
         reply = legacy.handle_command(phrase)

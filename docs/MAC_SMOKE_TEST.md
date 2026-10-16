@@ -1,4 +1,4 @@
-# MacBook smoke test — JARVIS / Ultron
+# MacBook smoke test — Ultron
 
 Reproducible checklist for the **real device**. Everything here needs hardware, macOS
 permissions, or live provider credentials that a CI runner does not have, so none of it
@@ -15,12 +15,24 @@ cannot run is `N/A` with the reason, never a silent pass.
 | 0.2 | `python -m ultron doctor` | `[ok]` for server bind, API token, session state; credentials listed as configured/not set |
 | 0.3 | `python -m ultron token init` then `python -m ultron token init --client` | token files written `0600` under the data directory |
 | 0.4 | `python -m ultron check-secrets` | `No hardcoded credentials found...` |
-| 0.5 | `pytest -q` | `1298 passed, 21 skipped` (the 21 are opt-in live-provider tests) |
+| 0.5 | `pytest -q` | `1430 passed, 22 skipped` (the 22 are opt-in live-provider tests plus one Python-3.10-only path) |
 | 0.6 | `python -m ultron agent "what is two plus two"` | a bounded agent turn completes; no tool runs |
-| 0.7 | `./run_jarvis.command` | server binds `127.0.0.1:5001`, `/healthz` answers, HUD opens with a one-time login link |
+| 0.7 | `./run_jarvis.command` | server binds `127.0.0.1:5001`, `/healthz` answers, **no browser opens**; the HUD is only reachable via `uv run ultron open-hud` |
+| 0.8 | `uv sync --extra macos` then `./macos/build_app.sh` | writes `macos/Ultron.app`, prints `commit:`/`built:`/`signed:`, no error. It must **not** ask for a signing password |
+| 0.9 | `./macos/Ultron.app/Contents/MacOS/UltronMenuBar` | a menu-bar item titled `o Ultron` appears within a few seconds, **no dock icon**, and the process stays alive. A traceback, or the process exiting immediately, is a FAIL — this is exactly how the launch crash presented. The console must also be **free of `ObjCSuperWarning`** — that warning means `macos.menubar` was imported without `super` bound to `objc.super`, and it means the builtin `super` is being used for an Objective-C class, which cannot see class methods |
+| 0.10 | Click the menu-bar item | six entries: Start Listening, Stop, Voice Diagnostics..., Open HUD (optional), Quit Ultron (⌘Q) |
+| 0.11 | Click **Voice Diagnostics...** | a dialog shows the same output as `ultron voice-status`. If nothing appears, the helper is failing silently |
+| 0.12 | Click **Open HUD (optional)** | the browser opens **only now**; no browser was opened by rows 0.9 or 0.10 |
+| 0.13 | Click **Quit Ultron** | the app exits, the menu-bar item disappears, and `python -c "import psutil; ..."` shows no surviving `UltronMenuBar` process |
+| 0.14 | `uv run --extra macos python -W error::objc.ObjCSuperWarning -c "import macos.menubar"` | exits 0 with **no output**. Turning `ObjCSuperWarning` into a hard error catches a regression here on the spot; a warning printed to the console is easy to miss. Requires the `macos` extra (PyObjC) |
 
 `doctor` is the fastest signal: if a credential or the session state is broken, nothing
 downstream is worth testing.
+
+Rows 0.8–0.14 are the native path and are the only ones that need PyObjC. They are
+**not** covered by CI: `macos/menubar.py` is exercised on Linux against a fake AppKit
+that models PyObjC's binding rules, which proves the Objective-C bridge is wired
+correctly, but no CI runner can show a menu-bar icon.
 
 ## 1. Microphone and speech recognition
 
@@ -28,7 +40,7 @@ Requires the `voice` extra and macOS **Microphone** permission for the terminal.
 
 | # | Step | Expect |
 |---|------|--------|
-| 1.1 | `ULTRON_SKIP_DOTENV=1 python main.py`, wait for the boot line | `JARVIS system initializing...` is spoken; then `Listening...` |
+| 1.1 | `ULTRON_SKIP_DOTENV=1 python main.py`, wait for the boot line | the boot greeting is spoken (it now says *ULTRON*); then the state machine starts at IDLE |
 | 1.2 | Say "what is the weather today" | `You: what is the weather today` then a spoken answer |
 | 1.3 | Stay silent for ~10 s | a spoken `I did not hear anything, sir.` (the timeout path; a failed turn is audible, not silent) |
 | 1.3b | Speak gibberish / very quietly | a spoken `I could not make that out, sir.` (the no-match path) |
@@ -42,15 +54,21 @@ are the function defaults).
 
 ## 2. Wake word
 
-Requires the `wakeword` extra, `PICOVOICE_ACCESS_KEY`, and the bundled `jarvis.ppn`.
+Requires the `wakeword` extra, `PICOVOICE_ACCESS_KEY`, and an **`ultron.ppn`** - a custom
+model you train at https://console.picovoice.ai/ (Porcupine > custom keywords). The bundled
+`jarvis.ppn` is a *Jarvis* model and does **not** match the wake word "Ultron". Save yours as
+`ultron.ppn` in the project folder or point `ULTRON_WAKE_MODEL` at it.
+
+Run `python -m ultron voice-status` first: it reports which of the three is missing, as a static
+check that never opens the microphone.
 
 | # | Step | Expect |
 |---|------|--------|
 | 2.1 | `python -m ultron doctor` | client token line `[ok]` |
-| 2.2 | Start the server, then `python wakeword_listener.py` | `Listening for wake word 'jarvis'...`; no crash on missing mic |
-| 2.3 | Say "jarvis" | `Wake word detected`, then `Listening for command...` |
+| 2.2 | Start the server, then `python wakeword_listener.py` | `Wake Word Listener Active... say 'Ultron'`; no crash on missing mic |
+| 2.3 | Say "ultron" | `Wake word detected: ULTRON`, then `Listening for command...` |
 | 2.4 | Say a command, e.g. "open Safari" | `Heard command: open safari`, routed, and the confirmation policy applies |
-| 2.5 | Say "jarvis" then nothing | times out with a typed message and returns to wake-word listening |
+| 2.5 | Say "ultron" then nothing | times out with a typed message and returns to wake-word listening |
 | 2.6 | Run the listener with the server stopped | `Error talking to server:` - a redacted reason, no token, no traceback |
 
 ## 3. English / Hindi / Hinglish
@@ -100,7 +118,7 @@ a consequential action cannot be repeated by a retry.
 | 6.1 | "remember that my wifi password hint is the blue mug" | stored; `memory.json` is `0600` and the note is utf-8 clean |
 | 6.2 | Restart, ask "what did I ask you to remember" | the note is recalled |
 | 6.3 | Corrupt `memory.json` (write `{ not json`), restart | it is moved to `memory.json.unreadable-<timestamp>` with a printed notice; notes are **not** silently wiped |
-| 6.4 | Same for `tasks.json` | moved aside; startup prints `Saved task state was unusable...`; JARVIS still starts |
+| 6.4 | Same for `tasks.json` | moved aside; startup prints `Saved task state was unusable...`; Ultron still starts |
 | 6.5 | Start a task, kill the process mid-task, restart | `Interrupted task: <title> (nothing was re-run...)`; the task is `interrupted` |
 | 6.6 | Try to resume a **consequential** interrupted task | blocked until confirmed; confirming records `confirmed_at`; a fresh interruption clears it |
 | 6.7 | `python -m ultron history --show 10` after several turns | transcript is `0600`; `--export FILE` / `--import FILE` round-trip |
@@ -152,5 +170,15 @@ fake runners and no hardware:
   replies, auto-mode lag
 - task store: validation, quarantine, interrupted writes, duplicate resumes, bounds,
   redaction, permissions, confirmation rules
+- the native menu-bar shell's Objective-C bridge: `macos.menubar.main()` is executed on
+  Linux against a fake AppKit that models PyObjC's binding rules, so a wrong
+  superclass-initialiser call, a missing delegate keep-alive, an untargeted menu item,
+  a browser opened at startup, or a silently swallowed launch failure all fail the
+  build. The same fixture injects a fake `objc` and re-imports the module, which pins
+  the module-level `super = objc.super` binding — the exact identity test PyObjC
+  itself runs in `objc/_transform.py` — and proves the guarded import still works with
+  PyObjC absent. What that cannot prove: a real menu-bar icon, real microphone
+  permission, real PyObjC class-method resolution, code signing, or anything that
+  needs hardware
 
 Only the rows above are unverified without a Mac.

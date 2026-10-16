@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist for the Ultron native menu-bar app.
+
+  NSMicrophoneUsageDescription is the string macOS shows in the permission prompt, so
+  it must be specific and must not overstate what the app does. If it is missing, the
+  app is killed the first time it touches the microphone - which is the classic
+  "it just quits and I do not know why" failure on macOS.
+
+  LSUIElement=YES makes this a menu-bar app with no dock icon: it is an accessory that
+  lives in the status bar, not a document application.
+
+  Code-signing metadata: these are placeholders that the build script fills in from
+  the environment. Ad-hoc signing (the default, empty identity) is enough for local
+  use on your own Mac; a Developer ID is only needed to distribute to other machines.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Ultron</string>
+	<key>CFBundleDisplayName</key>
+	<string>Ultron</string>
+	<key>CFBundleIdentifier</key>
+	<string>local.ultron.assistant</string>
+	<key>CFBundleExecutable</key>
+	<string>UltronMenuBar</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+
+	<!-- Microphone permission: required, specific, and honest. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Ultron listens for the wake word and your commands on this Mac. Audio is sent to speech recognition and is never stored.</string>
+
+	<!-- Menu-bar accessory: no dock icon, no main window. -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<!-- Runs on Apple Silicon and Intel. -->
+	<key>LSArchitecturePriority</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+
+	<!-- The app must not be treated as a browser or a server. -->
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+</dict>
+</plist>

@@ -40,8 +40,16 @@ from ultron.history import recent as chat_history_recent, record_exchange as cha
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
-from ultron.voice import GoogleTranscriber, VoicePipeline, normalise_mode, profile_for
-from ultron.voice.transcribe import UNAVAILABLE
+from ultron.voice import (
+    GoogleTranscriber,
+    VoiceSession,
+    VoiceState,
+    build_engine,
+    normalise_mode,
+    profile_for,
+    setup_report,
+)
+from ultron.voice.diagnostics import VoiceLogger
 from ultron.voice.pipeline import FAILURE_MESSAGES, DEFAULT_FAILURE_MESSAGE
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
 from ultron.tools.macos import (
@@ -73,7 +81,16 @@ client = (OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_CLIENT_TIMEOUT, max_retr
           if OPENAI_API_KEY else None)
 
 MEMORY_FILE = os.getenv("ULTRON_MEMORY_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory.json")
-WAKE_WORD = "jarvis"
+# The product-facing wake word. "Ultron" is not a built-in Porcupine keyword, so it
+# needs a custom .ppn model - see ultron/voice/wakeword.py for the setup diagnostics.
+WAKE_WORD = "ultron"
+
+# Earlier builds answered to "Jarvis". It is still accepted (stripped from a transcript
+# and recognised in spoken commands) so an existing habit or script does not break, but
+# it is no longer the advertised name.
+LEGACY_WAKE_WORDS = ("jarvis",)
+WAKE_WORDS = (WAKE_WORD,) + LEGACY_WAKE_WORDS
+
 jarvis_sleep = False
 
 VOICE = "Daniel"  # macOS voice name
@@ -1445,7 +1462,7 @@ def set_sleep(asleep: bool, ctx: CommandContext = None) -> str:
 def _tool_set_sleep(args) -> ToolResult:
     global jarvis_sleep
     jarvis_sleep = bool(args.get("asleep"))
-    return ToolResult(True, "Entering sleep mode. Say Jarvis wake up." if jarvis_sleep else "I am awake sir.")
+    return ToolResult(True, f"Entering sleep mode. Say {WAKE_WORD.title()} wake up." if jarvis_sleep else "I am awake sir.")
 
 
 def reload_knowledge(ctx: CommandContext = None) -> str:
@@ -1894,7 +1911,7 @@ def handle_confirmation_intents(cmd: str, ctx: CommandContext):
 # it could not even say good morning. These replies are deterministic and offline, so
 # basic courtesy and trivial local questions work on day one, before any key exists.
 
-_SOCIAL_FILLER = frozenset({"jarvis", "sir", "please"})
+_SOCIAL_FILLER = frozenset(set(WAKE_WORDS) | {"sir", "please"})
 
 _SOCIAL_REPLIES = {
     "hello": "Hello, sir. What can I do for you?",
@@ -1907,7 +1924,7 @@ _SOCIAL_REPLIES = {
     "thank you": "You are welcome, sir.",
     "thanks": "You are welcome, sir.",
     "how are you": "I am running well, sir. All systems are nominal.",
-    "who are you": "I am JARVIS, your local assistant, sir.",
+    "who are you": "I am ULTRON, your local assistant, sir.",
     "what can you do": (
         "I can tell the time and date, open apps and sites, set reminders and notes, "
         "answer questions, and run tasks — all from this machine, sir."
@@ -1965,7 +1982,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     explicit = _AGENT_PREFIX_RE.match(raw)
     if explicit:
         if jarvis_sleep:
-            return "I am currently in sleep mode. Say Jarvis wake up."
+            return f"I am currently in sleep mode. Say {WAKE_WORD.title()} wake up."
         return run_agent(explicit.group("objective"), ctx)
 
     # Personal learning
@@ -2077,7 +2094,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         return set_sleep(False, ctx)
 
     if jarvis_sleep:
-        return "I am currently in sleep mode. Say Jarvis wake up."
+        return f"I am currently in sleep mode. Say {WAKE_WORD.title()} wake up."
 
     # ===== STUDY PLANNER COMMANDS =====
     if "help me learn" in cmd:
@@ -2145,7 +2162,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
         return web_search_ddg(q, ctx)
 
     if "search" in cmd and not cmd.startswith("search "):
-        # e.g. "jarvis can you search tesla model 3 review"
+        # e.g. "ultron can you search tesla model 3 review"
         parts = cmd.split("search", 1)
         q = parts[1].strip()
         if q:
@@ -2287,6 +2304,8 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
 # ================== OPTIONAL CLI LOOP ==================
 _EXIT_PHRASES = frozenset({
     "exit", "quit", "stop", "stop listening", "goodbye", "good bye", "bye",
+    "exit ultron", "quit ultron", "goodbye ultron", "ultron exit", "ultron stop",
+    # legacy: earlier builds answered to "Jarvis"
     "exit jarvis", "quit jarvis", "goodbye jarvis", "jarvis exit", "jarvis stop",
 })
 
@@ -2299,26 +2318,46 @@ def is_exit_command(text: str) -> bool:
     return text.strip().strip(".!?").lower() in _EXIT_PHRASES
 
 
-#: Seconds to wait before retrying when this machine has no voice input at all.
-VOICE_UNAVAILABLE_RETRY_SECONDS = 5.0
+def _voice_env_float(name: str, default: float, low: float, high: float) -> float:
+    """Read a bounded seconds value from the environment, falling back to the default.
 
-
-def _voice_pause(turn) -> float:
-    """Seconds to wait before the next listening attempt.
-
-    Without a microphone - or without the optional ``voice`` extra, which is the
-    first-run mistake to expect - retrying instantly spins the CPU and floods the
-    terminal (measured at ~39,000 turns per second, ~875,000 log lines in 25 s), so
-    those turns back off. A turn that simply heard nothing, or could not make it out,
-    is a normal miss and is retried immediately.
+    A garbage or out-of-range value must not be able to wedge the voice loop: a
+    non-positive command timeout would make it give up instantly, and an enormous
+    back-off would make it look dead. Both are clamped into a sane range.
     """
-    return VOICE_UNAVAILABLE_RETRY_SECONDS if getattr(turn, "error", None) == UNAVAILABLE else 0.0
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        print(f"Warning: {name}={raw!r} is not a number; using {default}.")
+        return default
+    if not low <= value <= high:
+        print(f"Warning: {name}={value} is outside {low}-{high}; using {default}.")
+        return default
+    return value
+
+
+def _log_voice_event(line: str) -> None:
+    """One structured, secret-free voice-pipeline log line."""
+    print(f"[voice] {line}")
+
+
+def _on_voice_transition(old_state, new_state) -> None:
+    """React to a state change. Used by the native UI to drive its orb/menu state."""
+    global _LAST_VOICE_STATE
+    _LAST_VOICE_STATE = new_state
+
+
+_LAST_VOICE_STATE = VoiceState.IDLE
 
 
 def _voice_responder(text: str, ctx) -> str:
     """Command routing for a spoken turn: strip the wake word, then route or say goodbye."""
-    if WAKE_WORD in text:
-        text = text.replace(WAKE_WORD, "").strip()
+    for word in WAKE_WORDS:
+        if word in text:
+            text = text.replace(word, "").strip()
     if is_exit_command(text):
         return _VOICE_GOODBYE
     return handle_command(text, ctx)
@@ -2335,7 +2374,7 @@ def report_interrupted_tasks() -> list:
 
         store = TaskStore.for_env()
         interrupted = store.recover()
-    except Exception as e:  # a broken task file must never stop JARVIS from starting
+    except Exception as e:  # a broken task file must never stop the assistant from starting
         print("Could not read saved tasks:", redact(e))
         return []
     for task in interrupted:
@@ -2351,25 +2390,38 @@ def main():
     report_interrupted_tasks()
     ctx = CommandContext.local_voice()  # the person at this machine's microphone
     # Boot voice: Tony-ish
-    speak("JARVIS system initializing. Welcome back, sir. You can ask me anything.", ctx)
-    # Voice loop: recognition, language handling, routing and speech output are separate
-    # stages (ultron.voice). ULTRON_VOICE_LANGUAGE selects en|hi|hinglish|auto; a spoken
-    # "switch to hindi" changes it for the rest of the session.
-    pipeline = VoicePipeline(
+    speak(f"{WAKE_WORD.upper()} system initializing. Welcome back, sir. You can ask me anything.", ctx)
+    # Voice loop. One state machine owns the microphone for the whole session
+    # (ultron.voice.session): the wake engine holds it while waiting, releases it before
+    # the command is captured, and takes it back after the reply is spoken - so the two
+    # never compete for the same device. Every transition is logged with a timestamp and
+    # a category, never with the transcript or the reply.
+    #
+    # ULTRON_VOICE_LANGUAGE selects en|hi|hinglish|auto; a spoken "switch to hindi"
+    # changes it for the rest of the session.
+    language = normalise_mode(None)
+    engine = build_engine()
+    logger = VoiceLogger(sink=_log_voice_event)
+    session = VoiceSession(
+        wake_engine=engine,
         transcriber=GoogleTranscriber(),
         responder=lambda text: _voice_responder(text, ctx),
         speaker=lambda text: speak(text, ctx),
-        language=normalise_mode(None),
+        logger=logger,
+        language=language,
+        on_transition=_on_voice_transition,
+        # How long to listen for one command, and how long to wait before retrying when
+        # this machine has no usable microphone at all. Both are clamped so a bad value
+        # cannot make the loop give up instantly or appear dead.
+        command_timeout=_voice_env_float("ULTRON_VOICE_COMMAND_TIMEOUT", 6.0, 1.0, 120.0),
+        unavailable_backoff=_voice_env_float("ULTRON_VOICE_UNAVAILABLE_BACKOFF", 5.0, 0.0, 300.0),
     )
-    while True:
-        turn = pipeline.run()
-        spoken = turn.transcript.replace(WAKE_WORD, "").strip()
-        if turn.reply == _VOICE_GOODBYE and is_exit_command(spoken):
-            break
-        pause = _voice_pause(turn)
-        if pause:
-            # No usable voice input here: wait instead of spinning the CPU.
-            time.sleep(pause)
+    if not engine.available:
+        # Never claim wake-word support that is not configured: say what is missing.
+        print("Wake-word listening is not available yet:")
+        print(engine.setup.describe() if hasattr(engine, "setup") else setup_report().describe())
+        print("Starting in always-listening mode instead (no wake word needed).")
+    session.run()
 
 
 if __name__ == "__main__":
