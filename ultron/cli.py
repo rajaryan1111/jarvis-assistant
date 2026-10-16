@@ -411,7 +411,9 @@ def _cmd_voice_status(args: argparse.Namespace) -> int:
     print("Speech to text:")
     transcriber = GoogleTranscriber()
     if transcriber.available():
-        print(f"  [ok]   Google speech recognition is available ({transcriber.locale} by default).")
+        print("  [ok]   Google speech recognition is available.")
+        print(f"         Default recogniser locale: {transcriber.locale} "
+              f"(language mode '{transcriber.language}').")
         print("         Recognition itself needs an internet connection.")
     else:
         print("  [--]   Google speech recognition is unavailable.")

@@ -410,6 +410,77 @@ def test_the_locale_is_passed_through_to_the_transcriber():
     assert transcriber.locales == ["hi-IN"]
 
 
+def test_the_session_hands_the_recogniser_a_real_tag_not_a_language_code():
+    """The session used to hand Google the raw mode code ("en", "auto", "hinglish"),
+    none of which are tags its recogniser accepts. ``GoogleTranscriber.locale_for``
+    closes that gap, so the tag that reaches ``recognize_google`` is a real one.
+    """
+    from ultron.voice.transcribe import GoogleTranscriber
+
+    handed = []
+
+    class FakeRecognizer:
+        def adjust_for_ambient_noise(self, source, duration=0.0):
+            return None
+
+        def listen(self, source, timeout=0.0, phrase_time_limit=0.0):
+            return b"audio"
+
+        def recognize_google(self, audio, language=""):
+            handed.append(language)
+            return "what time is it"
+
+    class FakeMicrophone:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    import types
+
+    sr = types.SimpleNamespace(Recognizer=FakeRecognizer, Microphone=FakeMicrophone)
+    session, *_ = make_session(transcriber=GoogleTranscriber(sr_module=sr), language="en")
+    turn = session.run_once()
+
+    assert turn.ok, turn
+    assert handed == ["en-IN"], handed
+
+
+def test_the_session_follows_a_language_switch_with_a_real_tag():
+    """A spoken "switch to hindi" must change the tag, not just the mode."""
+    from ultron.voice.transcribe import GoogleTranscriber
+
+    handed = []
+
+    class FakeRecognizer:
+        def adjust_for_ambient_noise(self, source, duration=0.0):
+            return None
+
+        def listen(self, source, timeout=0.0, phrase_time_limit=0.0):
+            return b"audio"
+
+        def recognize_google(self, audio, language=""):
+            handed.append(language)
+            return "kya haal hai"
+
+    class FakeMicrophone:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    import types
+
+    sr = types.SimpleNamespace(Recognizer=FakeRecognizer, Microphone=FakeMicrophone)
+    transcriber = GoogleTranscriber(sr_module=sr)
+    session, *_ = make_session(transcriber=transcriber, language="hi")
+    session.run_once()
+
+    assert handed == ["hi-IN"], handed
+
+
 # ============================================================ wake-word configuration
 def test_the_wake_word_is_ultron():
     assert WAKE_WORD == "ultron"
