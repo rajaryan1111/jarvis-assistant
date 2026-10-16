@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 import vision
 
 
@@ -92,3 +94,57 @@ def test_importing_vision_creates_no_directories(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     importlib.reload(vision)
     assert not (tmp_path / "faces").exists()
+
+
+# ============================================================ camera capture
+class _FakeCap:
+    """Stand-in webcam: records release() and can be told to fail mid-read."""
+
+    def __init__(self, frames=(), fail_on_read=False):
+        self._frames, self._fail = list(frames), fail_on_read
+        self.opened, self.released = True, 0
+
+    def isOpened(self):
+        return self.opened
+
+    def read(self):
+        if self._fail:
+            raise RuntimeError("camera unplugged")
+        return (True, self._frames.pop(0)) if self._frames else (False, None)
+
+    def release(self):
+        self.released += 1
+        self.opened = False
+
+
+def _install_camera(monkeypatch, cap):
+    monkeypatch.setattr(vision, "cv2", SimpleNamespace(VideoCapture=lambda index: cap))
+    return cap
+
+
+def test_camera_frame_is_captured_and_the_handle_released(monkeypatch):
+    cap = _install_camera(monkeypatch, _FakeCap(frames=["frame"]))
+    assert vision._capture_frame_from_camera(timeout_sec=0.1) == "frame"
+    assert cap.released == 1
+
+
+def test_camera_handle_is_released_even_when_a_read_raises(monkeypatch):
+    """A webcam that raises mid-read must not leak the capture handle.
+
+    The loop used to call cap.release() only on the normal path, so an exception
+    from read() skipped it and left the device open.
+    """
+    cap = _install_camera(monkeypatch, _FakeCap(fail_on_read=True))
+    with pytest.raises(RuntimeError):
+        vision._capture_frame_from_camera(timeout_sec=0.1)
+    assert cap.released == 1, "the camera handle must be released on the failure path too"
+
+
+def test_camera_that_never_opens_is_reported_not_retried(monkeypatch):
+    class Closed(_FakeCap):
+        def isOpened(self):
+            return False
+
+    cap = _install_camera(monkeypatch, Closed())
+    assert vision._capture_frame_from_camera(timeout_sec=0.1) is None
+    assert cap.released == 0  # nothing was opened, so nothing to release

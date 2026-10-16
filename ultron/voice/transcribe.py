@@ -1,0 +1,76 @@
+"""Speech-to-text adapter with an explicit failure taxonomy.
+
+One place turns microphone audio into text, so the CLI loop and the wake-word listener
+share the same behaviour (locale and error handling). ``speech_recognition`` and a
+microphone are optional: when they are missing the transcriber reports ``unavailable``
+instead of raising, and no raw exception text is ever printed or returned - only a typed reason.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+#: Failure reasons. ``None`` means the transcript is usable.
+UNAVAILABLE = "unavailable"   # speech_recognition extra or microphone missing
+TIMEOUT = "timeout"           # nothing was said within the timeout
+NO_MATCH = "no_match"         # audio captured but not understood
+ERROR = "error"               # anything else; details are redacted, never surfaced
+
+INSTALL_HINT = "Voice input needs the optional 'voice' extra: uv sync --extra voice (or pip install -e '.[voice]')."
+
+
+@dataclass(frozen=True)
+class Transcription:
+    """The outcome of one listening attempt."""
+
+    text: str = ""
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None and bool(self.text.strip())
+
+
+def _sr_module():
+    try:
+        import speech_recognition as sr
+    except ImportError:
+        return None
+    return sr
+
+
+class GoogleTranscriber:
+    """Capture one utterance from the microphone and recognise it with Google.
+
+    ``sr_module`` and ``microphone`` are injectable so tests never touch hardware or the
+    network; production passes nothing and gets the real ``speech_recognition``.
+    """
+
+    def __init__(self, *, sr_module=None, ambient_duration: float = 0.4) -> None:
+        self._sr = sr_module
+        self._ambient_duration = ambient_duration
+
+    def available(self) -> bool:
+        return (self._sr or _sr_module()) is not None
+
+    def transcribe(self, *, locale: str, timeout: float = 6.0, phrase_time_limit: float = 8.0) -> Transcription:
+        sr = self._sr or _sr_module()
+        if sr is None:
+            return Transcription(error=UNAVAILABLE)
+        recognizer = sr.Recognizer()
+        try:
+            with sr.Microphone() as source:
+                if self._ambient_duration:
+                    recognizer.adjust_for_ambient_noise(source, duration=self._ambient_duration)
+                audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
+        except Exception as exc:  # noqa: BLE001 - mapped to a typed reason, details redacted
+            reason = TIMEOUT if type(exc).__name__ == "WaitTimeoutError" else ERROR
+            return Transcription(error=reason)
+        try:
+            text = recognizer.recognize_google(audio, language=locale)
+        except Exception as exc:  # noqa: BLE001 - no raw recogniser text reaches the caller
+            reason = NO_MATCH if type(exc).__name__ == "UnknownValueError" else ERROR
+            return Transcription(error=reason)
+        if not isinstance(text, str) or not text.strip():
+            return Transcription(error=NO_MATCH)
+        return Transcription(text=text.strip())

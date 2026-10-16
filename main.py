@@ -6,6 +6,7 @@ import datetime
 import subprocess
 import urllib.parse
 import re
+import random
 import webbrowser
 import time
 import threading
@@ -39,6 +40,9 @@ from ultron.history import recent as chat_history_recent, record_exchange as cha
 from ultron.security.paths import atomic_write_text
 from ultron.security.policy import CommandContext, RiskTier, voice_trust_from_env
 from ultron.security.redact import redact
+from ultron.voice import GoogleTranscriber, VoicePipeline, normalise_mode, profile_for
+from ultron.voice.transcribe import UNAVAILABLE
+from ultron.voice.pipeline import FAILURE_MESSAGES, DEFAULT_FAILURE_MESSAGE
 from ultron.tools.base import FunctionTool, ToolResult, ToolSpec
 from ultron.tools.macos import (
     BrightnessTool,
@@ -67,7 +71,6 @@ GROQ_API_KEY = get_credential("GROQ_API_KEY")  # only used by the agent loop wit
 CHAT_MODEL = load_chat_model()  # ULTRON_CHAT_MODEL; the agent uses AGENT_CONFIG.model
 client = (OpenAI(api_key=OPENAI_API_KEY, timeout=OPENAI_CLIENT_TIMEOUT, max_retries=OPENAI_CLIENT_MAX_RETRIES)
           if OPENAI_API_KEY else None)
-_recognizer = None  # created lazily; SpeechRecognition is an optional "voice" extra
 
 MEMORY_FILE = os.getenv("ULTRON_MEMORY_FILE") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory.json")
 WAKE_WORD = "jarvis"
@@ -112,65 +115,77 @@ def speak(text: str, ctx: CommandContext = None) -> str:
     return outcome.status
 
 
-def listen(timeout=6, phrase_time_limit=8) -> str:
-    """Microphone listening (only for CLI main loop). Requires the optional 'voice' extra."""
-    global _recognizer
-    try:
-        import speech_recognition as sr
-    except ImportError:
-        print("Voice input needs the optional 'voice' extra: uv sync --extra voice  (or pip install -e '.[voice]')")
-        time.sleep(2)
-        return ""
-    if _recognizer is None:
-        _recognizer = sr.Recognizer()
-    recognizer = _recognizer
-    with sr.Microphone() as source:
-        recognizer.adjust_for_ambient_noise(source, duration=0.4)
-        print("Listening...")
-        try:
-            audio = recognizer.listen(source, timeout=timeout, phrase_time_limit=phrase_time_limit)
-            query = recognizer.recognize_google(audio, language="en-IN")
-            print(f"You: {query}")
-            return query.lower()
-        except Exception as e:
-            print("Listen error:", e)
-            return ""
+def listen(timeout=6, phrase_time_limit=8, language: str = None) -> str:
+    """Microphone listening (only for CLI main loop). Requires the optional 'voice' extra.
+
+    Recognition goes through the shared transcriber in :mod:`ultron.voice`, so the CLI
+    loop and the wake-word listener behave identically. ``language`` selects the
+    recognition locale (en|hi|hinglish|auto); it defaults to ``ULTRON_VOICE_LANGUAGE``,
+    which is English - the historical behaviour. Failures print a short reason and
+    return "", never raw recogniser text.
+    """
+    locale = profile_for(normalise_mode(language)).stt_locale
+    result = GoogleTranscriber().transcribe(locale=locale, timeout=timeout, phrase_time_limit=phrase_time_limit)
+    if result.ok:
+        print(f"You: {result.text}")
+        return result.text.lower()
+    print("Listen error:", FAILURE_MESSAGES.get(result.error or "", DEFAULT_FAILURE_MESSAGE))
+    return ""
 
 
 # ================== MEMORY ==================
+def _empty_memory():
+    return {
+        "notes": [],
+        "profile": {},
+        "favorites": {},
+        "smarthome": {},
+        "reminders": [],
+        "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
+        "plans": [],
+    }
+
+
+def _quarantine_unreadable_memory(exc: Exception) -> None:
+    """Set an unparseable memory file aside so the owner's data is never destroyed.
+
+    ``load_memory`` falls back to an empty structure when the file cannot be understood;
+    without this the next ``save_memory`` would overwrite the file and erase real notes,
+    reminders and profile. The file is renamed (recoverable), never deleted.
+    """
+    backup = Path(f"{MEMORY_FILE}.unreadable-{time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        os.replace(MEMORY_FILE, backup)
+    except OSError:
+        print("Memory load error:", type(exc).__name__, "(could not set the unreadable file aside)")
+        return
+    print(f"Memory file was unreadable ({type(exc).__name__}); moved it to {backup.name} and started fresh.")
+
+
 def load_memory():
     if not os.path.exists(MEMORY_FILE):
-        return {
-            "notes": [],
-            "profile": {},
-            "favorites": {},
-            "smarthome": {},
-            "reminders": [],
-            "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
-            "plans": [],
-        }
+        return _empty_memory()
     try:
-        with open(MEMORY_FILE, "r") as f:
+        # utf-8 is pinned: the file may hold any language, and the locale default is not.
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Make sure all keys exist even for old files
-            data.setdefault("notes", [])
-            data.setdefault("profile", {})
-            data.setdefault("favorites", {})
-            data.setdefault("smarthome", {})
-            data.setdefault("reminders", [])
-            data.setdefault("security", {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60})
-            data.setdefault("plans", [])
-            return data
+        if not isinstance(data, dict):
+            raise ValueError("memory file is not a JSON object")
+        # Make sure all keys exist even for old files
+        data.setdefault("notes", [])
+        data.setdefault("profile", {})
+        data.setdefault("favorites", {})
+        data.setdefault("smarthome", {})
+        data.setdefault("reminders", [])
+        data.setdefault("security", {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60})
+        data.setdefault("plans", [])
+        return data
+    except ValueError as exc:
+        # UnicodeDecodeError / JSONDecodeError / wrong shape: preserve, then start fresh.
+        _quarantine_unreadable_memory(exc)
+        return _empty_memory()
     except Exception:
-        return {
-            "notes": [],
-            "profile": {},
-            "favorites": {},
-            "smarthome": {},
-            "reminders": [],
-            "security": {"enabled": False, "last_auth_time": 0, "auth_timeout_sec": 60},
-            "plans": [],
-        }
+        return _empty_memory()
 
 
 _memory_lock = threading.RLock()
@@ -628,20 +643,20 @@ def system_report() -> str:
     try:
         cpu = psutil.cpu_percent()
     except Exception as e:
-        print("CPU percent error:", e)
+        print("CPU percent error:", redact(e))
         cpu = None
 
     try:
         ram = psutil.virtual_memory().percent
     except Exception as e:
-        print("RAM percent error:", e)
+        print("RAM percent error:", redact(e))
         ram = None
 
     try:
         bat = psutil.sensors_battery()
         bat_str = f"{bat.percent}%" if bat else "N/A"
     except Exception as e:
-        print("Battery read error:", e)
+        print("Battery read error:", redact(e))
         bat_str = "N/A"
 
     temp = get_cpu_temperature()
@@ -760,6 +775,12 @@ def take_screenshot(ctx: CommandContext = None) -> str:
 def tell_time() -> str:
     now = datetime.datetime.now()
     return f"It is {now.strftime('%I:%M %p on %A, %d %B %Y')}."
+
+
+def tell_date() -> str:
+    """Today's date, answered locally. No network, no provider, no failure mode."""
+    now = datetime.datetime.now()
+    return f"Today is {now.strftime('%A, %d %B %Y')}."
 
 
 # ================== STATUS FOR HUD ==================
@@ -1050,13 +1071,13 @@ def reminder_watcher():
                     else:
                         remaining.append(r)
                 except Exception as e:
-                    print("Reminder item error:", e)
+                    print("Reminder item error:", redact(e))
 
             if len(remaining) != len(rlist):
                 memory["reminders"] = remaining
                 save_memory(memory)
         except Exception as e:
-            print("Reminder watcher loop error:", e)
+            print("Reminder watcher loop error:", redact(e))
 
 
 # ================== SECURITY MODE (AI SECURITY) ==================
@@ -1216,7 +1237,7 @@ def intruder_watcher():
                 continue
             intruder_check_once()
         except Exception as e:
-            print("Intruder watcher error:", e)
+            print("Intruder watcher error:", redact(e))
 
 
 # ================== STUDY PLANNER (AUTONOMOUS TASK PLANNER) ==================
@@ -1405,7 +1426,7 @@ def start_background_services() -> bool:
             try:
                 Thread(target=target, name=name, daemon=True).start()
             except Exception as e:
-                print(f"{name} start error:", e)
+                print(f"{name} start error:", redact(e))
         _background_started = True
         return True
 
@@ -1867,6 +1888,57 @@ def handle_confirmation_intents(cmd: str, ctx: CommandContext):
     return None
 
 
+# ================== SOCIAL REPLIES (work with no configuration) ==================
+# A brand-new install has no provider key — that is the default `doctor` state — and
+# without these the assistant answered "My OpenAI key is not configured." to "hello":
+# it could not even say good morning. These replies are deterministic and offline, so
+# basic courtesy and trivial local questions work on day one, before any key exists.
+
+_SOCIAL_FILLER = frozenset({"jarvis", "sir", "please"})
+
+_SOCIAL_REPLIES = {
+    "hello": "Hello, sir. What can I do for you?",
+    "hi": "Hello, sir. What can I do for you?",
+    "hey": "Hello, sir. What can I do for you?",
+    "good morning": "Good morning, sir. I hope you are well.",
+    "good afternoon": "Good afternoon, sir.",
+    "good evening": "Good evening, sir.",
+    "good night": "Good night, sir. Sleep well.",
+    "thank you": "You are welcome, sir.",
+    "thanks": "You are welcome, sir.",
+    "how are you": "I am running well, sir. All systems are nominal.",
+    "who are you": "I am JARVIS, your local assistant, sir.",
+    "what can you do": (
+        "I can tell the time and date, open apps and sites, set reminders and notes, "
+        "answer questions, and run tasks — all from this machine, sir."
+    ),
+}
+
+_COIN_PHRASES = frozenset({"flip a coin", "toss a coin", "heads or tails"})
+_DICE_PHRASES = frozenset({"roll a dice", "roll a die", "roll the dice", "roll dice"})
+
+
+def _social_reply(cmd: str) -> str | None:
+    """Deterministic offline reply for courtesy and trivial questions, else ``None``.
+
+    The *whole* command must match, so "open hello kitty" or "search for thank you
+    notes" can never be swallowed by a greeting. Anything that does not match falls
+    through to the normal router unchanged.
+    """
+    text = cmd.strip().lower()
+    text = "".join(ch if (ch.isalnum() or ch.isspace()) else " " for ch in text)
+    phrase = " ".join(w for w in text.split() if w not in _SOCIAL_FILLER)
+    if not phrase:
+        return None
+    if phrase in _SOCIAL_REPLIES:
+        return _SOCIAL_REPLIES[phrase]
+    if phrase in _COIN_PHRASES:
+        return f"It is {'heads' if random.random() < 0.5 else 'tails'}, sir."
+    if phrase in _DICE_PHRASES:
+        return f"You rolled a {random.randint(1, 6)}, sir."
+    return None
+
+
 # ================== MAIN COMMAND HANDLER ==================
 def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     """
@@ -1904,6 +1976,13 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     profile_reply = answer_profile_query(cmd)
     if profile_reply:
         return profile_reply
+
+    # Courtesy and trivial questions, answered offline. Placed after the profile
+    # branches so "what is my name" still wins, and matched on the whole command so
+    # no real request can be swallowed.
+    social = _social_reply(cmd)
+    if social is not None:
+        return social
 
     # Notes
     if cmd.startswith("remember that"):
@@ -2031,6 +2110,14 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
     if "time" in cmd:
         return tell_time()
 
+    # A date question needs no network at all, so it must never fall through to
+    # the Wikipedia or provider path (which is what happened before this branch).
+    # The phrasings are explicit: a bare "day" would also swallow questions the
+    # assistant has no feature for (e.g. "what day is my birthday party"), and a
+    # confidently wrong answer is worse than an honest one.
+    if "date" in cmd or "what day is it" in cmd or "what day is today" in cmd or "which day" in cmd:
+        return tell_date()
+
     if "battery" in cmd:
         try:
             bat = psutil.sensors_battery()
@@ -2078,7 +2165,7 @@ def handle_command(cmd: str, ctx: CommandContext = None) -> str:
             cpu = psutil.cpu_percent()
             return f"Current CPU usage is {cpu} percent, sir."
         except Exception as e:
-            print("CPU usage error:", e)
+            print("CPU usage error:", redact(e))
             return "I could not read the CPU usage, sir."
 
     if "temperature" in cmd or "overheating" in cmd or "too hot" in cmd:
@@ -2204,28 +2291,85 @@ _EXIT_PHRASES = frozenset({
 })
 
 
+_VOICE_GOODBYE = "Goodbye, sir."  # sentinel reply: the voice loop ends after speaking it
+
+
 def is_exit_command(text: str) -> bool:
     """Only whole exit phrases end the CLI loop ("stop the music" or "shutdown system" do not)."""
     return text.strip().strip(".!?").lower() in _EXIT_PHRASES
 
 
+#: Seconds to wait before retrying when this machine has no voice input at all.
+VOICE_UNAVAILABLE_RETRY_SECONDS = 5.0
+
+
+def _voice_pause(turn) -> float:
+    """Seconds to wait before the next listening attempt.
+
+    Without a microphone - or without the optional ``voice`` extra, which is the
+    first-run mistake to expect - retrying instantly spins the CPU and floods the
+    terminal (measured at ~39,000 turns per second, ~875,000 log lines in 25 s), so
+    those turns back off. A turn that simply heard nothing, or could not make it out,
+    is a normal miss and is retried immediately.
+    """
+    return VOICE_UNAVAILABLE_RETRY_SECONDS if getattr(turn, "error", None) == UNAVAILABLE else 0.0
+
+
+def _voice_responder(text: str, ctx) -> str:
+    """Command routing for a spoken turn: strip the wake word, then route or say goodbye."""
+    if WAKE_WORD in text:
+        text = text.replace(WAKE_WORD, "").strip()
+    if is_exit_command(text):
+        return _VOICE_GOODBYE
+    return handle_command(text, ctx)
+
+
+def report_interrupted_tasks() -> list:
+    """Tell the owner which saved tasks were interrupted by the last shutdown.
+
+    Recovery only restores context: nothing is re-executed here, and a task that could
+    take a real-world action is not made runnable until it is confirmed again.
+    """
+    try:
+        from ultron.tasks import TaskStore
+
+        store = TaskStore.for_env()
+        interrupted = store.recover()
+    except Exception as e:  # a broken task file must never stop JARVIS from starting
+        print("Could not read saved tasks:", redact(e))
+        return []
+    for task in interrupted:
+        print(f"Interrupted task: {task.title} (nothing was re-run; say 'resume task' to continue)")
+    for moved in store.quarantined:
+        print(f"Saved task state was unusable and was moved to {moved.name}; starting with no saved tasks.")
+    return interrupted
+
+
 def main():
     load_dotenv_if_enabled()
     start_background_services()
+    report_interrupted_tasks()
     ctx = CommandContext.local_voice()  # the person at this machine's microphone
     # Boot voice: Tony-ish
     speak("JARVIS system initializing. Welcome back, sir. You can ask me anything.", ctx)
+    # Voice loop: recognition, language handling, routing and speech output are separate
+    # stages (ultron.voice). ULTRON_VOICE_LANGUAGE selects en|hi|hinglish|auto; a spoken
+    # "switch to hindi" changes it for the rest of the session.
+    pipeline = VoicePipeline(
+        transcriber=GoogleTranscriber(),
+        responder=lambda text: _voice_responder(text, ctx),
+        speaker=lambda text: speak(text, ctx),
+        language=normalise_mode(None),
+    )
     while True:
-        text = listen()
-        if not text:
-            continue
-        if WAKE_WORD in text:
-            text = text.replace(WAKE_WORD, "").strip()
-        if is_exit_command(text):
-            speak("Goodbye, sir.", ctx)
+        turn = pipeline.run()
+        spoken = turn.transcript.replace(WAKE_WORD, "").strip()
+        if turn.reply == _VOICE_GOODBYE and is_exit_command(spoken):
             break
-        reply = handle_command(text, ctx)
-        speak(reply, ctx)
+        pause = _voice_pause(turn)
+        if pause:
+            # No usable voice input here: wait instead of spinning the CPU.
+            time.sleep(pause)
 
 
 if __name__ == "__main__":
