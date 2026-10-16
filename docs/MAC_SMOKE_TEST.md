@@ -15,12 +15,23 @@ cannot run is `N/A` with the reason, never a silent pass.
 | 0.2 | `python -m ultron doctor` | `[ok]` for server bind, API token, session state; credentials listed as configured/not set |
 | 0.3 | `python -m ultron token init` then `python -m ultron token init --client` | token files written `0600` under the data directory |
 | 0.4 | `python -m ultron check-secrets` | `No hardcoded credentials found...` |
-| 0.5 | `pytest -q` | `1408 passed, 22 skipped` (the 22 are opt-in live-provider tests plus one Python-3.10-only path) |
+| 0.5 | `pytest -q` | `1424 passed, 22 skipped` (the 22 are opt-in live-provider tests plus one Python-3.10-only path) |
 | 0.6 | `python -m ultron agent "what is two plus two"` | a bounded agent turn completes; no tool runs |
 | 0.7 | `./run_jarvis.command` | server binds `127.0.0.1:5001`, `/healthz` answers, **no browser opens**; the HUD is only reachable via `uv run ultron open-hud` |
+| 0.8 | `uv sync --extra macos` then `./macos/build_app.sh` | writes `macos/Ultron.app`, prints `commit:`/`built:`/`signed:`, no error. It must **not** ask for a signing password |
+| 0.9 | `./macos/Ultron.app/Contents/MacOS/UltronMenuBar` | a menu-bar item titled `o Ultron` appears within a few seconds, **no dock icon**, and the process stays alive. A traceback, or the process exiting immediately, is a FAIL — this is exactly how the launch crash presented |
+| 0.10 | Click the menu-bar item | six entries: Start Listening, Stop, Voice Diagnostics..., Open HUD (optional), Quit Ultron (⌘Q) |
+| 0.11 | Click **Voice Diagnostics...** | a dialog shows the same output as `ultron voice-status`. If nothing appears, the helper is failing silently |
+| 0.12 | Click **Open HUD (optional)** | the browser opens **only now**; no browser was opened by rows 0.9 or 0.10 |
+| 0.13 | Click **Quit Ultron** | the app exits, the menu-bar item disappears, and `python -c "import psutil; ..."` shows no surviving `UltronMenuBar` process |
 
 `doctor` is the fastest signal: if a credential or the session state is broken, nothing
 downstream is worth testing.
+
+Rows 0.8–0.13 are the native path and are the only ones that need PyObjC. They are
+**not** covered by CI: `macos/menubar.py` is exercised on Linux against a fake AppKit
+that models PyObjC's binding rules, which proves the Objective-C bridge is wired
+correctly, but no CI runner can show a menu-bar icon.
 
 ## 1. Microphone and speech recognition
 
@@ -158,5 +169,11 @@ fake runners and no hardware:
   replies, auto-mode lag
 - task store: validation, quarantine, interrupted writes, duplicate resumes, bounds,
   redaction, permissions, confirmation rules
+- the native menu-bar shell's Objective-C bridge: `macos.menubar.main()` is executed on
+  Linux against a fake AppKit that models PyObjC's binding rules, so a wrong
+  superclass-initialiser call, a missing delegate keep-alive, an untargeted menu item,
+  a browser opened at startup, or a silently swallowed launch failure all fail the
+  build. What that cannot prove: a real menu-bar icon, real microphone permission,
+  code signing, or anything that needs hardware
 
 Only the rows above are unverified without a Mac.

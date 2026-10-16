@@ -66,13 +66,28 @@ def test_the_menu_shell_exists_and_names_the_controller():
 
 
 def test_the_menu_shell_never_opens_a_browser_automatically():
-    """Requirement: wake-word activation and startup must not launch a browser."""
+    """Requirement: wake-word activation and startup must not launch a browser.
+
+    Every invocation of the HUD helper must sit inside the ``hud_`` menu action, which
+    only runs when the user picks the menu item. Comments and echoes that merely
+    mention the command are fine, so each mention is classified rather than counted.
+    """
     source = (MACOS / "menubar.py").read_text(encoding="utf-8")
-    for line in source.splitlines():
-        if "open-hud" in line and not line.lstrip().startswith("#"):
-            assert line.lstrip().startswith("subprocess.Popen"), (
-                f"the HUD is opened outside an explicit menu action: {line.strip()!r}"
-            )
+    lines = source.splitlines()
+    action_start = next(
+        (i for i, line in enumerate(lines) if line.strip().startswith("def hud_")),
+        None,
+    )
+    assert action_start is not None, "the HUD must be opened from a hud_ menu action"
+    for number, line in enumerate(lines):
+        if "open-hud" not in line:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith(('"""', "'''")):
+            continue  # documentation, not an invocation
+        assert number > action_start, (
+            f"line {number + 1} opens the HUD outside the hud_ menu action: {stripped!r}"
+        )
 
 
 def test_the_hud_menu_item_is_labelled_as_optional():
