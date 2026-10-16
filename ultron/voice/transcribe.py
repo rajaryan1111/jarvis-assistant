@@ -9,6 +9,7 @@ instead of raising, and no raw exception text is ever printed or returned - only
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 #: Failure reasons. ``None`` means the transcript is usable.
 UNAVAILABLE = "unavailable"   # speech_recognition extra or microphone missing
@@ -17,6 +18,14 @@ NO_MATCH = "no_match"         # audio captured but not understood
 ERROR = "error"               # anything else; details are redacted, never surfaced
 
 INSTALL_HINT = "Voice input needs the optional 'voice' extra: uv sync --extra voice (or pip install -e '.[voice]')."
+
+#: Sentinel for "no module was injected". Deliberately distinct from ``None``, which is
+#: a real value meaning "the optional dependency is absent" - the way a caller (or a
+#: test) states that this machine has no voice extra. Without the sentinel the two are
+#: indistinguishable and an explicit ``None`` gets read as "go and load the real one",
+#: which silently turns `unavailable` into a live microphone attempt on any machine
+#: that HAS the extra installed.
+_UNSET: Any = object()
 
 
 @dataclass(frozen=True)
@@ -42,19 +51,31 @@ def _sr_module():
 class GoogleTranscriber:
     """Capture one utterance from the microphone and recognise it with Google.
 
-    ``sr_module`` and ``microphone`` are injectable so tests never touch hardware or the
-    network; production passes nothing and gets the real ``speech_recognition``.
+    ``sr_module`` is injectable so tests never touch hardware or the network. Omit it -
+    the production default used by ``main.py`` and the wake-word listener - and the
+    optional ``speech_recognition`` module is loaded lazily. Pass ``None`` to state
+    explicitly that the module is absent; the transcriber then reports ``unavailable``
+    even on a machine that has the extra installed.
     """
 
-    def __init__(self, *, sr_module=None, ambient_duration: float = 0.4) -> None:
+    def __init__(self, *, sr_module: Any = _UNSET, ambient_duration: float = 0.4) -> None:
         self._sr = sr_module
         self._ambient_duration = ambient_duration
 
+    def _resolve(self) -> Any:
+        """The module to use: the injected one, or the optional dependency.
+
+        ``_UNSET`` means "nothing was injected, load the real thing". An explicit
+        ``None`` is a value rather than an absence, so it is returned as-is and the
+        caller's "there is no voice extra here" is honoured.
+        """
+        return _sr_module() if self._sr is _UNSET else self._sr
+
     def available(self) -> bool:
-        return (self._sr or _sr_module()) is not None
+        return self._resolve() is not None
 
     def transcribe(self, *, locale: str, timeout: float = 6.0, phrase_time_limit: float = 8.0) -> Transcription:
-        sr = self._sr or _sr_module()
+        sr = self._resolve()
         if sr is None:
             return Transcription(error=UNAVAILABLE)
         recognizer = sr.Recognizer()

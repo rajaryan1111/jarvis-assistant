@@ -1,4 +1,4 @@
-"""Porcupine wake-word listener: say "Jarvis", then a command, which is sent to the HUD server.
+"""Porcupine wake-word listener: say "Ultron", then a command, which is sent to the HUD server.
 
 Requirements (optional "wakeword" extra): ``uv sync --extra wakeword``.
 Configuration (in ``.env`` or your shell, never in this file):
@@ -13,7 +13,6 @@ Read-only and routine commands run directly; high-impact ones (shutdown, restart
 data, security changes) are only *requested* here and must be approved in the signed-in HUD.
 """
 
-import os
 import struct
 import sys
 
@@ -23,10 +22,15 @@ from ultron.config import MissingCredentialError, load_dotenv_if_enabled, load_s
 from ultron.security.redact import redact
 from ultron.voice import GoogleTranscriber, normalise_mode, profile_for
 from ultron.voice.pipeline import DEFAULT_FAILURE_MESSAGE, FAILURE_MESSAGES
+from ultron.voice.wakeword import (
+    WAKE_WORD,
+    setup_report,
+)
 from ultron.security.tokens import load_api_token, load_client_token
 
-# Keyword file path (jarvis.ppn in the project folder)
-KEYWORD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis.ppn")
+# The wake-word model. Ultron is not a built-in Porcupine keyword, so a custom .ppn is
+# required: save it as ultron.ppn next to this file, or point ULTRON_WAKE_MODEL at one.
+# The setup report below names exactly which of the three requirements is missing.
 REQUEST_TIMEOUT = (3, 60)  # (connect, read) seconds
 
 
@@ -51,7 +55,7 @@ class ServerClient:
         """Send recognized command text to /ask and have the server speak the reply."""
         try:
             reply = self._post("/ask", {"message": cmd}).get("reply", "")
-            print(f"Jarvis reply: {reply}")
+            print(f"{WAKE_WORD.title()} reply: {reply}")
             if reply:
                 self._post("/speak", {"text": reply[:1000]})
         except Exception as e:  # keep listening after network/server problems
@@ -99,9 +103,13 @@ def main() -> int:
         print("Note: using the owner API token. Run `python -m ultron token init --client` to give the "
               "listener a limited token instead.", file=sys.stderr)
 
-    if not os.path.exists(KEYWORD_PATH):
-        print(f"ERROR: Could not find keyword file: {KEYWORD_PATH}", file=sys.stderr)
+    report = setup_report()
+    if not report.ready:
+        print("ERROR: wake-word listening is not configured.", file=sys.stderr)
+        print(report.describe(), file=sys.stderr)
         return 2
+    keyword_path = report.model_path
+    assert keyword_path is not None  # ready implies a model
 
     try:
         import pvporcupine
@@ -115,7 +123,7 @@ def main() -> int:
     client = ServerClient(settings.local_base_url, token_result.token)
 
     try:
-        porcupine = pvporcupine.create(access_key=access_key, keyword_paths=[KEYWORD_PATH])
+        porcupine = pvporcupine.create(access_key=access_key, keyword_paths=[str(keyword_path)])
     except Exception as e:
         print("ERROR: could not start Porcupine:", redact(e, extra_secrets=(access_key,)), file=sys.stderr)
         return 2
@@ -129,7 +137,7 @@ def main() -> int:
         frames_per_buffer=porcupine.frame_length,
     )
 
-    print("Wake Word Listener Active... say 'Jarvis' 🔊")
+    print(f"Wake Word Listener Active... say '{WAKE_WORD.title()}' 🔊")
 
     try:
         while True:
@@ -138,7 +146,7 @@ def main() -> int:
 
             keyword_index = porcupine.process(pcm)
             if keyword_index >= 0:
-                print("Wake word detected: JARVIS")
+                print(f"Wake word detected: {WAKE_WORD.upper()}")
                 command = listen_command(sr)
                 if command:
                     client.send_command(command)

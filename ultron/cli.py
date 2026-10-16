@@ -16,6 +16,8 @@ Commands
   sessions reset       owner recovery when the session state is corrupt (logs everyone out)
   open-hud         open the HUD with a one-time, short-lived login link
   doctor           report configuration and optional-feature status (no secret values)
+  voice-status     voice pipeline diagnosis: audio device, wake-word setup, STT and TTS
+                   readiness. Static checks only - it never opens the microphone.
   check-secrets    scan files that could be committed for hardcoded credentials
   security status  show whether face-check security mode is on
   security disable owner recovery: turn security mode off from this Mac's shell
@@ -328,6 +330,121 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     return 1 if problems else 0
 
 
+def _cmd_voice_status(args: argparse.Namespace) -> int:
+    """Diagnose the voice pipeline: device, wake-word setup, STT and TTS readiness.
+
+    Every check here is STATIC. This command never opens the microphone, never records,
+    and never claims the wake word was heard - on a machine where it has not been
+    tested, that would be a guess. It reports what can be determined without audio and
+    names exactly what is missing and how to fix it.
+
+    Exit status: 0 when voice is fully configured, 1 when something is missing. That
+    makes it usable from a script or a startup check.
+    """
+    from ultron.voice.transcribe import GoogleTranscriber
+    from ultron.voice.wakeword import ACCESS_KEY_ENV_VAR, WAKE_WORD, setup_report
+
+    problems: list[str] = []
+
+    print(f"Voice status for wake word '{WAKE_WORD}' (static checks - no microphone used)")
+
+    # --- the audio input device, as far as it is detectable without recording ---
+    print()
+    print("Audio input:")
+    try:
+        import pyaudio
+    except ImportError:
+        print("  [--]   PyAudio is not installed, so no input device can be listed.")
+        print("         Fix: uv sync --extra voice  (or pip install -e '.[voice]')")
+        problems.append("pyaudio missing")
+    else:
+        try:
+            audio = pyaudio.PyAudio()
+        except Exception as exc:  # noqa: BLE001 - diagnostic only
+            print(f"  [--]   PyAudio is installed but failed to start: {type(exc).__name__}")
+            print("         That usually means no audio device, or a denied microphone permission.")
+            problems.append(f"pyaudio init failed ({type(exc).__name__})")
+        else:
+            try:
+                inputs = []
+                for index in range(audio.get_device_count()):
+                    info = audio.get_device_info_by_index(index)
+                    if info.get("maxInputChannels", 0) > 0:
+                        inputs.append((index, info.get("name", "?"), int(info.get("maxInputChannels", 0))))
+                if inputs:
+                    print(f"  [ok]   {len(inputs)} input device(s):")
+                    for index, name, channels in inputs:
+                        print(f"           {index}: {name} ({channels} channel(s))")
+                else:
+                    print("  [--]   PyAudio started but reported no input device.")
+                    print("         Check System Settings > Privacy & Security > Microphone.")
+                    problems.append("no input device")
+            finally:
+                audio.terminate()
+
+    # --- macOS microphone permission, only where it is actually detectable ---
+    print()
+    print("macOS microphone permission:")
+    if sys.platform == "darwin":
+        print("  [--]   Not detectable from Python without asking. Grant it in")
+        print("         System Settings > Privacy & Security > Microphone, then restart.")
+        print("         If it was denied, the app cannot bypass it - remove the app from")
+        print("         that list and re-add it, or run: tccutil reset Microphone")
+    else:
+        print(f"  [--]   Not applicable (platform is {sys.platform}).")
+
+    # --- the wake word ---
+    print()
+    print("Wake word:")
+    report = setup_report()
+    summary = report.describe().splitlines()
+    print(f"  [{'ok' if report.ready else '--'}]   {summary[0]}")
+    for line in summary[1:]:
+        print(f"         {line}")
+    if not report.ready:
+        problems.append("wake word not configured")
+    print(f"         The key variable is {ACCESS_KEY_ENV_VAR}; it is read from the")
+    print("         environment or .env and is never printed.")
+
+    # --- speech to text ---
+    print()
+    print("Speech to text:")
+    transcriber = GoogleTranscriber()
+    if transcriber.available():
+        print(f"  [ok]   Google speech recognition is available ({transcriber.locale} by default).")
+        print("         Recognition itself needs an internet connection.")
+    else:
+        print("  [--]   Google speech recognition is unavailable.")
+        print("         Fix: uv sync --extra voice")
+        problems.append("STT unavailable")
+
+    # --- text to speech ---
+    print()
+    print("Speech output:")
+    if sys.platform == "darwin":
+        from shutil import which
+        say = which("say")
+        if say:
+            print(f"  [ok]   macOS speech found at {say}.")
+        else:
+            print("  [--]   The macOS 'say' command was not found.")
+            problems.append("TTS unavailable")
+    else:
+        print("  [--]   Not on macOS: the built-in 'say' output is not available here.")
+
+    print()
+    print("This was a static configuration check. It did NOT test the microphone, and it")
+    print("cannot confirm the wake word was heard. For the real-device smoke test see")
+    print("docs/MAC_SMOKE_TEST.md - it has to be run on the Mac with the mic in hand.")
+    if problems:
+        print()
+        print(f"Not ready: {', '.join(problems)}")
+        return 1
+    print()
+    print("Voice is configured. Real-device behaviour still needs the smoke test.")
+    return 0
+
+
 def _cmd_check_secrets(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve() if args.root else PROJECT_ROOT
     findings = scan_repository(root)
@@ -431,6 +548,9 @@ def build_parser() -> argparse.ArgumentParser:
     ses.set_defaults(func=_cmd_sessions)
     sub.add_parser("open-hud", help="open the HUD with a one-time login link").set_defaults(func=_cmd_open_hud)
     sub.add_parser("doctor", help="check configuration and optional features").set_defaults(func=_cmd_doctor)
+    sub.add_parser("voice-status", help="diagnose the voice pipeline (static checks, no microphone)").set_defaults(
+        func=_cmd_voice_status
+    )
     cs = sub.add_parser("check-secrets", help="scan for hardcoded credentials")
     cs.add_argument("--root", help="repository root (default: this checkout)")
     cs.set_defaults(func=_cmd_check_secrets)

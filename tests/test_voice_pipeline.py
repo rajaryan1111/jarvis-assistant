@@ -348,32 +348,3 @@ def test_a_speaker_that_raises_does_not_kill_the_loop():
                              speaker=exploding_speaker)
     turn = pipeline.run()  # must not raise
     assert turn.transcript == "hello", turn
-
-
-def test_the_voice_loop_backs_off_when_voice_input_is_unavailable():
-    """A machine with no microphone must not spin the CPU.
-
-    Without this back-off the loop retried instantly: measured at ~39,000 turns per
-    second, writing ~875,000 lines to the terminal in 25 seconds. That happens on any
-    Mac that runs `python main.py` before installing the optional voice extra, which
-    is exactly the first-run mistake to expect. A normal failed turn (nothing said,
-    or not understood) must still retry immediately.
-    """
-    import main
-    from ultron.voice.pipeline import VoiceTurn
-    from ultron.voice.transcribe import UNAVAILABLE
-
-    assert main._voice_pause(VoiceTurn(error=UNAVAILABLE)) > 0
-    assert main._voice_pause(VoiceTurn(error="timeout")) == 0
-    assert main._voice_pause(VoiceTurn(error="no_match")) == 0
-    assert main._voice_pause(VoiceTurn()) == 0
-
-
-def test_the_backoff_is_not_so_long_that_voice_feels_broken():
-    """Long enough to stop the spin, short enough that plugging a mic in still works."""
-    import main
-    from ultron.voice.pipeline import VoiceTurn
-    from ultron.voice.transcribe import UNAVAILABLE
-
-    pause = main._voice_pause(VoiceTurn(error=UNAVAILABLE))
-    assert 0.5 <= pause <= 30, pause

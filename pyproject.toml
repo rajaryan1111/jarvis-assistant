@@ -37,8 +37,13 @@ wakeword = ["pvporcupine>=3.0", "SpeechRecognition>=3.10", "PyAudio>=0.2.14"]
 vision = ["opencv-contrib-python>=4.8", "mediapipe>=0.10.14", "numpy>=1.24"]
 # Offline knowledge base over your notes/PDFs.
 rag = ["sentence-transformers>=2.7", "pypdf>=4.0", "numpy>=1.24"]
+# Native macOS menu-bar app (macos/build_app.sh). PyObjC is the only way to build a
+# real macOS UI from Python; it is kept optional so the core stays dependency-light.
+macos = ["pyobjc-framework-Cocoa>=9.2"]
 dev = ["pytest>=8", "ruff>=0.6"]
+# Everything except the desktop extra, which is macOS-only by nature.
 all = ["jarvis-assistant[voice,wakeword,vision,rag]"]
+all-macos = ["jarvis-assistant[voice,wakeword,macos]"]
 
 [project.scripts]
 ultron = "ultron.cli:main"
@@ -48,7 +53,7 @@ ultron = "ultron.cli:main"
 # the source checkout, so use an editable install: `uv sync` does this by default).
 py-modules = [
     "main", "server", "jarvis_logic", "knowledge", "news", "vision",
-    "wakeword_listener", "musicLibrary", "client",
+    "wakeword_listener", "musicLibrary", "client", "macos",
 ]
 
 [tool.setuptools.packages.find]

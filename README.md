@@ -1,8 +1,8 @@
-# Jarvis — AI Voice Assistant
+# Ultron — AI Voice Assistant
 
 [![CI](https://github.com/rajaryan1111/jarvis-assistant/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rajaryan1111/jarvis-assistant/actions/workflows/ci.yml)
 
-A macOS-focused personal AI assistant that combines **voice interaction, vision, retrieval, LLM tools and desktop automation** in one Python application, with a browser-based HUD.
+A macOS-focused personal AI assistant that combines **voice interaction, vision, retrieval, LLM tools and desktop automation** in one Python application. The primary desktop experience is a **native menu-bar app** that needs no browser; a browser HUD remains available on explicit request.
 
 > This is a personal engineering project, not a production security product. Face recognition is a
 > prototype convenience feature, **not authentication**. The project is being evolved into
@@ -12,7 +12,7 @@ A macOS-focused personal AI assistant that combines **voice interaction, vision,
 
 ## Features
 
-- 🎙️ **Voice**: microphone loop (`python main.py`), an optional Porcupine wake word, and macOS `say` for speech.
+- 🎙️ **Voice**: a native menu-bar app ([`docs/NATIVE_MACOS.md`](docs/NATIVE_MACOS.md)), a microphone loop (`python main.py`), an "Ultron" wake word, and macOS `say` for speech. Say "Ultron", then a command — no browser involved.
 - 🧠 **LLM + RAG**: OpenAI-backed answers and study plans, plus an offline knowledge base over your notes/PDFs.
 - 🧩 **Multi-step requests**: a bounded agent loop picks tools step by step ("weather in Pune, then remind me
   at 6 pm"), checks the real results and never approves anything itself ([details](docs/M2_0_AGENT_LOOP.md)).
@@ -20,7 +20,7 @@ A macOS-focused personal AI assistant that combines **voice interaction, vision,
 - 🖥️ **macOS automation**: open apps/sites, screenshots, brightness/volume, diagnostics, and restart/shutdown (with confirmation).
 - ⏰ **Routines**: reminders, a study planner, local memory, sleep mode and a virtual smart-home state.
 - 🌐 **Integrations**: weather, news, Wikipedia, web/YouTube search and cricket scores.
-- 🖥️ **Web HUD**: a Flask server on `127.0.0.1` with an authenticated browser control surface.
+- 🖥️ **Web HUD (optional)**: a Flask server on `127.0.0.1` with an authenticated browser control surface. Never opened automatically — start it with `uv run ultron open-hud` when you want it.
 
 ## Requirements
 
@@ -123,14 +123,25 @@ The other entry points:
 
 ```bash
 uv run python main.py              # microphone loop (needs the voice extra); say "exit" or "goodbye" to quit
+uv run ultron voice-status         # what is configured, and what is missing (static checks, no mic)
 uv run python wakeword_listener.py # wake word; needs the server running, PICOVOICE_ACCESS_KEY and the client token
 ```
 
-`run_jarvis.command` starts the HUD. To also start the microphone loop in the same
-double-click, run `JARVIS_VOICE=1 ./run_jarvis.command` (or set `JARVIS_VOICE=1` inside
-the script). Voice needs the optional extra and a microphone permission; without them the
-loop says "Voice input is not available on this machine, sir." once every 5 seconds
-instead of spinning the CPU, and the HUD still works.
+**Native desktop app (no browser):**
+
+```bash
+uv sync --extra macos && ./macos/build_app.sh && open macos/Ultron.app
+```
+
+That builds a menu-bar app which listens for "Ultron" and answers out loud. It never
+opens a browser — see [`docs/NATIVE_MACOS.md`](docs/NATIVE_MACOS.md) for the
+permission, signing and wake-word-model steps.
+
+`run_jarvis.command` starts the microphone loop (voice is the default) and keeps the
+HUD server running in the background **without opening a browser**. The HUD is only
+opened when you ask for it, with `uv run ultron open-hud` or `ULTRON_HUD=1
+./run_jarvis.command`. Voice needs the optional extra and a microphone permission;
+without them the loop says so clearly instead of spinning the CPU.
 
 **Works with no API key at all.** Courtesy and questions that need no network are
 answered locally, so a fresh install is usable on day one: "hello", "good morning",
@@ -138,7 +149,7 @@ answered locally, so a fresh install is usable on day one: "hello", "good mornin
 "flip a coin", "roll a dice". A provider key is only needed for open-ended questions,
 the agent loop and the live-data tools (weather, news, cricket, web search).
 
-Voice stays the main way to use JARVIS: read-only and routine commands (time, weather, open apps, volume,
+Voice stays the main way to use **Ultron**: read-only and routine commands (time, weather, open apps, volume,
 notes, reminders, ...) just work. **High-impact actions** (shut down, restart, clear caches or all reminders,
 turn off security mode, replace your face) can be *requested* by voice but must be **approved in the
 signed-in HUD** with the CONFIRM button. No code is spoken, and "confirm" by voice is refused, because a voice
@@ -330,7 +341,7 @@ says plainly what is still unverified.
 
 ```text
 server.py             starts the HUD/API server (ultron.api.app)
-main.py               legacy JARVIS command router, voice loop and integrations
+main.py               legacy command router, voice loop and integrations
 ultron/
   config.py           settings + credential loading (env/.env only)
   api/app.py          Flask app: auth, origin/host/CSRF guards, routes

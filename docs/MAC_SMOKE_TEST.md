@@ -1,4 +1,4 @@
-# MacBook smoke test — JARVIS / Ultron
+# MacBook smoke test — Ultron
 
 Reproducible checklist for the **real device**. Everything here needs hardware, macOS
 permissions, or live provider credentials that a CI runner does not have, so none of it
@@ -17,7 +17,7 @@ cannot run is `N/A` with the reason, never a silent pass.
 | 0.4 | `python -m ultron check-secrets` | `No hardcoded credentials found...` |
 | 0.5 | `pytest -q` | `1298 passed, 21 skipped` (the 21 are opt-in live-provider tests) |
 | 0.6 | `python -m ultron agent "what is two plus two"` | a bounded agent turn completes; no tool runs |
-| 0.7 | `./run_jarvis.command` | server binds `127.0.0.1:5001`, `/healthz` answers, HUD opens with a one-time login link |
+| 0.7 | `./run_jarvis.command` | server binds `127.0.0.1:5001`, `/healthz` answers, **no browser opens**; the HUD is only reachable via `uv run ultron open-hud` |
 
 `doctor` is the fastest signal: if a credential or the session state is broken, nothing
 downstream is worth testing.
@@ -28,7 +28,7 @@ Requires the `voice` extra and macOS **Microphone** permission for the terminal.
 
 | # | Step | Expect |
 |---|------|--------|
-| 1.1 | `ULTRON_SKIP_DOTENV=1 python main.py`, wait for the boot line | `JARVIS system initializing...` is spoken; then `Listening...` |
+| 1.1 | `ULTRON_SKIP_DOTENV=1 python main.py`, wait for the boot line | the boot greeting is spoken (it now says *ULTRON*); then the state machine starts at IDLE |
 | 1.2 | Say "what is the weather today" | `You: what is the weather today` then a spoken answer |
 | 1.3 | Stay silent for ~10 s | a spoken `I did not hear anything, sir.` (the timeout path; a failed turn is audible, not silent) |
 | 1.3b | Speak gibberish / very quietly | a spoken `I could not make that out, sir.` (the no-match path) |
@@ -42,15 +42,21 @@ are the function defaults).
 
 ## 2. Wake word
 
-Requires the `wakeword` extra, `PICOVOICE_ACCESS_KEY`, and the bundled `jarvis.ppn`.
+Requires the `wakeword` extra, `PICOVOICE_ACCESS_KEY`, and an **`ultron.ppn`** - a custom
+model you train at https://console.picovoice.ai/ (Porcupine > custom keywords). The bundled
+`jarvis.ppn` is a *Jarvis* model and does **not** match the wake word "Ultron". Save yours as
+`ultron.ppn` in the project folder or point `ULTRON_WAKE_MODEL` at it.
+
+Run `python -m ultron voice-status` first: it reports which of the three is missing, as a static
+check that never opens the microphone.
 
 | # | Step | Expect |
 |---|------|--------|
 | 2.1 | `python -m ultron doctor` | client token line `[ok]` |
-| 2.2 | Start the server, then `python wakeword_listener.py` | `Listening for wake word 'jarvis'...`; no crash on missing mic |
-| 2.3 | Say "jarvis" | `Wake word detected`, then `Listening for command...` |
+| 2.2 | Start the server, then `python wakeword_listener.py` | `Wake Word Listener Active... say 'Ultron'`; no crash on missing mic |
+| 2.3 | Say "ultron" | `Wake word detected: ULTRON`, then `Listening for command...` |
 | 2.4 | Say a command, e.g. "open Safari" | `Heard command: open safari`, routed, and the confirmation policy applies |
-| 2.5 | Say "jarvis" then nothing | times out with a typed message and returns to wake-word listening |
+| 2.5 | Say "ultron" then nothing | times out with a typed message and returns to wake-word listening |
 | 2.6 | Run the listener with the server stopped | `Error talking to server:` - a redacted reason, no token, no traceback |
 
 ## 3. English / Hindi / Hinglish
@@ -100,7 +106,7 @@ a consequential action cannot be repeated by a retry.
 | 6.1 | "remember that my wifi password hint is the blue mug" | stored; `memory.json` is `0600` and the note is utf-8 clean |
 | 6.2 | Restart, ask "what did I ask you to remember" | the note is recalled |
 | 6.3 | Corrupt `memory.json` (write `{ not json`), restart | it is moved to `memory.json.unreadable-<timestamp>` with a printed notice; notes are **not** silently wiped |
-| 6.4 | Same for `tasks.json` | moved aside; startup prints `Saved task state was unusable...`; JARVIS still starts |
+| 6.4 | Same for `tasks.json` | moved aside; startup prints `Saved task state was unusable...`; Ultron still starts |
 | 6.5 | Start a task, kill the process mid-task, restart | `Interrupted task: <title> (nothing was re-run...)`; the task is `interrupted` |
 | 6.6 | Try to resume a **consequential** interrupted task | blocked until confirmed; confirming records `confirmed_at`; a fresh interruption clears it |
 | 6.7 | `python -m ultron history --show 10` after several turns | transcript is `0600`; `--export FILE` / `--import FILE` round-trip |
