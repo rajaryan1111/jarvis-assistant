@@ -13,7 +13,7 @@ import math
 from pathlib import Path
 
 from ultron.config import DEFAULT_CHAT_MODEL
-from ultron.security.paths import atomic_write_text
+from ultron.security.paths import atomic_replace
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -31,12 +31,52 @@ MAX_FILE_BYTES = 8 * 1024 * 1024  # characters read per text document (8 MiB)
 MAX_PDF_PAGES = 1000              # pages parsed per PDF
 MAX_EXTRACTED_CHARS = 2_000_000   # extracted text kept per document
 MAX_CHUNKS_PER_DOC = 2000         # chunks kept per document
-MAX_TOTAL_CHUNKS = 10_000         # entries in one index
-MAX_INDEX_BYTES = 64 * 1024 * 1024  # index file size guard (64 MiB)
+MAX_TOTAL_CHUNKS = 6_000         # entries in one index; sized so a worst-case
+                                 # serialized entry (~9.5 KiB at 384 dims with a
+                                 # max-size chunk) stays within MAX_INDEX_BYTES,
+                                 # which fits roughly 7,200 such entries
+MAX_INDEX_BYTES = 64 * 1024 * 1024  # index file size guard (64 MiB): the hard
+                                 # backstop if entries serialize larger than
+                                 # estimated (long paths, longer float reprs)
 MAX_EMBEDDING_DIMS = 4096         # longest embedding trusted at retrieval
 MAX_ENTRY_TEXT_CHARS = 50_000     # longest entry text trusted at retrieval
 MAX_CONTEXT_CHARS = 12_000        # total retrieved context handed to a model
 TOP_K = 4                         # chunks retrieved per question
+
+
+class _IndexTooLarge(Exception):
+    """Raised when streaming the index would exceed MAX_INDEX_BYTES."""
+
+
+def _write_index_bounded(target: Path, entries: list) -> None:
+    """Stream ``entries`` to ``target`` as JSON under the MAX_INDEX_BYTES budget.
+
+    Produces exactly the bytes ``json.dumps({"entries": entries})`` would, but one
+    entry at a time, so the full document string (and a second full UTF-8 copy)
+    is never materialized. The write goes through the same atomic temp-file
+    replacement as ``atomic_write_text``; if the budget is exceeded the temp file
+    is discarded and any previous index is left untouched.
+    """
+    prefix = b'{"entries": ['
+    closing = b"]}"
+
+    def _write(tmp_name: str) -> None:
+        written = len(prefix) + len(closing)
+        with open(tmp_name, "wb") as handle:
+            handle.write(prefix)
+            for index, entry in enumerate(entries):
+                piece = json.dumps(entry).encode("utf-8")
+                if index:
+                    piece = b", " + piece
+                written += len(piece)
+                if written > MAX_INDEX_BYTES:
+                    raise _IndexTooLarge
+                handle.write(piece)
+            handle.write(closing)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    atomic_replace(target, _write, mode=0o600)
 
 
 class RagUnavailable(RuntimeError):
@@ -110,14 +150,33 @@ def _load_pdf(path: str) -> str:
     try:
         with open(path, "rb") as f:
             reader = PdfReader(f)
-            texts = []
+            # Bounded incremental accumulation: stop extracting once the character
+            # budget is spent instead of materializing the whole document and
+            # truncating afterwards. This bounds our own buffering only - pypdf
+            # may still allocate substantially while parsing a single page's
+            # content stream (e.g. a decompression bomb), which the page and
+            # character caps cannot prevent.
+            parts = []
+            used = 0
             for page_number, page in enumerate(reader.pages, start=1):
                 if page_number > MAX_PDF_PAGES:
                     print("[KB] PDF page cap reached:", path)
                     break
-                t = page.extract_text() or ""
-                texts.append(t)
-        return _cap_extracted_text("\n".join(texts), path)
+                if used >= MAX_EXTRACTED_CHARS:
+                    print("[KB] Extracted text cap reached:", path)
+                    break
+                text = page.extract_text() or ""
+                if not text:
+                    continue
+                budget = MAX_EXTRACTED_CHARS - used - (1 if parts else 0)
+                if budget <= 0:
+                    print("[KB] Extracted text cap reached:", path)
+                    break
+                if len(text) > budget:
+                    text = text[:budget]
+                parts.append(text)
+                used += len(text) + (1 if len(parts) > 1 else 0)
+            return "\n".join(parts)
     except Exception as e:
         print("[KB] PDF read error:", path, type(e).__name__)
         return ""
@@ -238,17 +297,19 @@ def rebuild_knowledge_base(openai_client=None):
     for entry, emb in zip(all_entries, embeddings):
         entry["embedding"] = [float(x) for x in emb]
 
-    data = {"entries": all_entries}
-    payload = json.dumps(data)
-    if len(payload.encode("utf-8")) > MAX_INDEX_BYTES:
-        print("[KB] Index size cap reached:", len(payload), "bytes")
+    try:
+        # Stream under the byte budget: the full JSON document is never built in
+        # memory, and an overflow refuses the rebuild before anything is replaced,
+        # so the previous index stays usable.
+        _write_index_bounded(Path(INDEX_FILE), all_entries)
+    except _IndexTooLarge:
+        print("[KB] Index size cap reached; rebuild refused.")
         return (
-            "The knowledge index would be too large to save, sir. "
+            "The knowledge index would be too large to save, sir "
+            f"(my limit is {MAX_INDEX_BYTES // (1024 * 1024)} MiB, "
+            f"about {MAX_TOTAL_CHUNKS} chunks). "
             "Please remove or split some documents and try again."
         )
-    try:
-        # Atomic replace: a failed or interrupted rebuild keeps the previous index usable.
-        atomic_write_text(Path(INDEX_FILE), payload)
     except Exception as e:
         print("[KB] Failed to save index:", type(e).__name__)
         return "I tried to save the knowledge index, but something went wrong, sir."

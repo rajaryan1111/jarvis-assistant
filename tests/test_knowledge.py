@@ -247,3 +247,118 @@ def test_knowledge_load_index_rejects_oversized_file(monkeypatch, tmp_path):
     monkeypatch.setattr(knowledge, "MAX_INDEX_BYTES", 32)
 
     assert knowledge._load_index() is None
+
+
+# --- Phase 7.1 follow-up: capacity reconciliation and pre-allocation bounds ----
+
+
+def _representative_entry():
+    """A realistic worst-case index entry: full-precision 384-dim embedding, max-size chunk."""
+    return {
+        "source": "/Users/owner/knowledge_docs/semester-notes/computer-networks.md",
+        "chunk_id": 1,
+        "text": "x" * 1200,
+        "embedding": [((i * 37) % 199 - 99) / 97.0 for i in range(384)],
+    }
+
+
+def test_knowledge_index_capacity_is_consistent():
+    entry_bytes = len(json.dumps(_representative_entry()).encode("utf-8"))
+    effective_capacity = knowledge.MAX_INDEX_BYTES // entry_bytes
+
+    # The advertised chunk limit must be reachable within the byte budget...
+    assert effective_capacity >= knowledge.MAX_TOTAL_CHUNKS
+    # ...and must not be set far below what the budget allows (headroom <= 2x).
+    assert effective_capacity <= knowledge.MAX_TOTAL_CHUNKS * 2
+
+
+def test_knowledge_rebuild_refuses_oversized_index_preserving_previous(monkeypatch, tmp_path):
+    docs = _point_docs_at(monkeypatch, tmp_path)
+    (docs / "a.md").write_text("dijkstra shortest path " * 50)
+    index_file = _index_path(tmp_path)
+
+    knowledge.rebuild_knowledge_base()
+    original = index_file.read_bytes()
+    size = len(original)
+
+    # Exact boundary: an index that fits the budget exactly is written.
+    monkeypatch.setattr(knowledge, "MAX_INDEX_BYTES", size)
+    msg = knowledge.rebuild_knowledge_base()
+    assert "indexed" in msg
+    assert index_file.read_bytes() == original
+
+    # One byte over: refused, and the previously valid index survives untouched.
+    monkeypatch.setattr(knowledge, "MAX_INDEX_BYTES", size - 1)
+    msg = knowledge.rebuild_knowledge_base()
+    assert "too large" in msg.lower()
+    assert index_file.read_bytes() == original
+
+
+def test_knowledge_index_serialization_is_bounded(monkeypatch, tmp_path):
+    docs = _point_docs_at(monkeypatch, tmp_path)
+    (docs / "a.md").write_text("dijkstra shortest path " * 10_000)
+    real_dumps = json.dumps
+    seen = []
+
+    def spy(obj, *args, **kwargs):
+        text = real_dumps(obj, *args, **kwargs)
+        seen.append(text)
+        return text
+
+    monkeypatch.setattr(knowledge.json, "dumps", spy)
+
+    knowledge.rebuild_knowledge_base()
+
+    assert seen, "index serialization happened"
+    largest_step = max(len(s.encode("utf-8")) for s in seen)
+    # No single serialization step may materialize the whole document: each call
+    # handles at most one entry (~1.5 KiB here), never the ~280 KiB full index.
+    assert largest_step <= 64 * 1024
+
+    # The on-disk format is unchanged: the file is exactly json.dumps of its content.
+    text = _index_path(tmp_path).read_text(encoding="utf-8")
+    saved = json.loads(text)
+    assert text == real_dumps({"entries": saved["entries"]})
+
+
+def test_knowledge_pdf_extraction_stops_at_text_cap(monkeypatch, tmp_path):
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    calls = []
+
+    class CountingPage:
+        def __init__(self, size):
+            self.size = size
+
+        def extract_text(self):
+            calls.append(1)
+            return "p" * self.size
+
+    class CountingReader:
+        def __init__(self, handle):
+            self.pages = [CountingPage(10_000) for _ in range(5)]
+
+    monkeypatch.setattr(knowledge, "_pdf_reader_class", lambda: CountingReader)
+    monkeypatch.setattr(knowledge, "MAX_PDF_PAGES", 5)
+    monkeypatch.setattr(knowledge, "MAX_EXTRACTED_CHARS", 15_000)
+
+    text = knowledge._load_pdf(str(pdf))
+
+    # Exactly the cap (10,000 + one separator + 4,999), and extraction stopped
+    # early: pages after the budget is spent are never parsed at all.
+    assert len(text) == 15_000
+    assert len(calls) == 2
+    assert text.startswith("p" * 10_000)
+
+
+def test_knowledge_pdf_read_error_is_contained(monkeypatch, tmp_path):
+    pdf = tmp_path / "bad.pdf"
+    pdf.write_bytes(b"not a pdf")
+
+    class BoomReader:
+        def __init__(self, handle):
+            raise ValueError("boom")
+
+    monkeypatch.setattr(knowledge, "_pdf_reader_class", lambda: BoomReader)
+
+    assert knowledge._load_pdf(str(pdf)) == ""
