@@ -11,6 +11,11 @@ from pathlib import Path
 
 import pytest
 
+try:  # tomllib is stdlib from 3.11; the repo's declared tomli fallback covers 3.10
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+    import tomli as tomllib  # type: ignore[no-redef]
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MACOS = REPO_ROOT / "macos"
 
@@ -91,8 +96,6 @@ def test_the_native_extra_is_declared():
 
 def test_the_macos_module_is_packaged():
     """`python -m macos` is what the built app's stub execs, so it must be installed."""
-    import tomllib
-
     with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
         data = tomllib.load(handle)
     assert "macos" in data["tool"]["setuptools"]["py-modules"]
