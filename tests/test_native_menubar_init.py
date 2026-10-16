@@ -1,20 +1,34 @@
 """Regression tests for the native menu-bar shell's Objective-C bridge.
 
-The bug these guard: the app died at launch with
+The bugs these guard, in the order they were found on a real Mac:
 
-    File "macos/menubar.py", line 82, in init
-        self = AppKit.NSObject.init(self)
-    TypeError: Need 0 arguments, got 1
+1. The app died at launch with
 
-so it exited before its menu-bar icon ever appeared. In PyObjC an Objective-C
-*instance* method is not reachable through the class object: the receiver is already
-bound, so passing ``self`` explicitly is an extra argument to a selector that takes
-none. The correct idiom is ``super().init()``.
+       File "macos/menubar.py", line 104, in main
+           bridge = Bridge.alloc().init()
+       File "macos/menubar.py", line 82, in init
+           self = AppKit.NSObject.init(self)
+       TypeError: Need 0 arguments, got 1
 
-Because a real Mac is not available in CI, :class:`FakeAppKit` models the one binding
-rule that matters - class-level access to an instance method raises - and the **real**
-``macos.menubar.main()`` is executed against it. That is what makes the old code fail
-and the new code pass, without a GUI, a microphone or PyObjC.
+   In PyObjC an Objective-C *instance* method is not reachable through the class
+   object: the receiver is already bound, so ``AppKit.NSObject.init(self)`` passes the
+   receiver as an explicit argument to a selector that takes none.
+
+2. With ``super()``, PyObjC then warned
+
+       ObjCSuperWarning: Objective-C subclass uses super(), but super is not objc.super
+
+   pyobjc-core's ``Lib/objc/_transform.py`` inspects every class body that uses
+   zero-argument ``super()`` and warns unless *the defining module's* ``super`` **is**
+   ``objc.super`` - compared by identity. The builtin ``super`` walks the class
+   ``__dict__``, which cannot see Objective-C *class* methods (they live on the
+   metaclass), so ``objc.super`` is the only correct way to chain to an Objective-C
+   superclass. The fix is ``super = objc.super`` at module level in ``menubar.py``.
+
+Because a real Mac is not available in CI, :class:`FakeAppKit` models the PyObjC
+binding rules that matter and the **real** ``macos.menubar.main()`` is executed against
+them. That is what makes the old code fail and the new code pass, without a GUI, a
+microphone or PyObjC.
 
 What is NOT verified here, and cannot be: the actual menu-bar icon on screen, macOS
 microphone permission, code signing, and anything that needs real hardware. Those are
@@ -23,6 +37,8 @@ in docs/MAC_SMOKE_TEST.md and must be run on the Mac.
 from __future__ import annotations
 
 import ast
+import builtins
+import re
 import subprocess
 import sys
 import types
@@ -40,7 +56,7 @@ class _InstanceOnly:
 
     An Objective-C instance method is reachable through an *instance*. Accessing it
     through the class and passing the receiver as an argument is a TypeError - which
-    is exactly the error the Mac reported.
+    is exactly the error the Mac reported for ``AppKit.NSObject.init(self)``.
     """
 
     def __init__(self, func):
@@ -184,6 +200,24 @@ class FakeNSAlert(FakeNSObject):
         self.shown += 1
 
 
+# ============================================================ a faithful fake `objc`
+class FakeObjCSuper(builtins.super):
+    """Stands in for ``objc.super``.
+
+    PyObjC's ``objc.super`` is a subclass of the builtin ``super`` that overrides
+    attribute lookup so Objective-C *class* methods (which live on the metaclass) can
+    be resolved. Modelling it as a distinct subclass - rather than aliasing the
+    builtin - keeps the identity check meaningful: the invariant under test is
+    ``module.super is objc.super``, which a plain alias to the builtin would trivially
+    satisfy and so could never catch a regression.
+    """
+
+
+def make_fake_objc():
+    """A fresh fake ``objc`` namespace, so tests never share state."""
+    return types.SimpleNamespace(super=FakeObjCSuper, ObjCSuperWarning=Warning)
+
+
 def make_fake_appkit():
     """A fresh fake AppKit namespace, so tests never share state."""
     module = types.ModuleType("AppKit")
@@ -208,9 +242,11 @@ def make_fake_appkit():
 
 @pytest.fixture()
 def appkit(monkeypatch):
-    """Install the fake AppKit and import the real menu-bar module."""
+    """Install the fake AppKit and fake objc, then import the real menu-bar module."""
     module = make_fake_appkit()
+    fake_objc = make_fake_objc()
     monkeypatch.setitem(sys.modules, "AppKit", module)
+    monkeypatch.setitem(sys.modules, "objc", fake_objc)
     # The shell must not shell out during startup. Every route a helper could take is
     # recorded: the raw subprocess module, and the audited wrapper the shell imports.
     calls = {"popen": [], "run": [], "run_command": []}
@@ -232,14 +268,27 @@ def appkit(monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     monkeypatch.setattr(subprocess, "run", fake_run)
 
+    # `menubar.py` binds `super = objc.super` at import time, so the module must be
+    # imported *after* the fake `objc` is in place. Drop any cached copy so the import
+    # is fresh, and make sure sys.modules points at that same fresh module for the
+    # duration of the test - PyObjC's own check reads
+    # `sys.modules[cls.__module__].super`, so a stale entry would silently test the
+    # wrong object.
+    sys.modules.pop("macos.menubar", None)
     import macos.menubar as menubar
+
+    sys.modules["macos.menubar"] = menubar
 
     monkeypatch.setattr(menubar, "run_command", fake_run_command, raising=False)
     # tolerant on purpose: against a regression that removed _KEEP_ALIVE this must not
     # mask the failure - it must let the test run and fail on the real defect.
     if hasattr(menubar, "_KEEP_ALIVE"):
         monkeypatch.setattr(menubar, "_KEEP_ALIVE", [], raising=True)
-    return types.SimpleNamespace(module=module, menubar=menubar, calls=calls)
+    try:
+        yield types.SimpleNamespace(module=module, menubar=menubar, calls=calls, objc=fake_objc)
+    finally:
+        # drop it again so a later test re-imports against whatever is installed then
+        sys.modules.pop("macos.menubar", None)
 
 
 def run_main(appkit):
@@ -251,6 +300,25 @@ def bridge_of(appkit):
     """The Bridge instance the shell built and kept alive."""
     kept = getattr(appkit.menubar, "_KEEP_ALIVE", [])
     return next(obj for obj in kept if type(obj).__name__ == "Bridge")
+
+
+def pyobjc_super_check(module_name: str) -> bool:
+    """PyObjC's own test, copied from pyobjc-core Lib/objc/_transform.py.
+
+    It runs over the class dict of any class body that uses zero-argument super():
+    the module that defines the class must have `super` bound to `objc.super`,
+    compared by identity.
+    """
+    mod = sys.modules.get(module_name)
+    if mod is None:
+        return False
+    objc = sys.modules.get("objc")
+    if objc is None:
+        return False
+    try:
+        return mod.super is objc.super
+    except AttributeError:
+        return False
 
 
 # ============================================================ the launch crash itself
@@ -319,6 +387,72 @@ def test_every_objective_c_initialiser_override_calls_super():
             ]
             assert supers, f"{cls.name}.{fn.name} never calls super()"
     assert checked >= 1, "expected at least one Objective-C initialiser override to guard"
+
+
+# ============================================ the ObjCSuperWarning regression
+def test_the_module_binds_super_to_objc_super(appkit):
+    """The reported warning:
+
+        ObjCSuperWarning: Objective-C subclass uses super(), but super is not objc.super
+
+    PyObjC compares by identity, so `super = objc.super` must be a module-level
+    binding in the module that *defines* the subclass - which is this one, because
+    Bridge and AppDelegate are nested inside `_run` and inherit its ``__module__``.
+    """
+    assert appkit.menubar.super is appkit.objc.super, (
+        "macos/menubar.py must bind `super = objc.super`; PyObjC warns otherwise"
+    )
+
+
+def test_pyobjcs_own_super_check_passes(appkit):
+    """The exact test pyobjc-core performs, so the fix is judged by its rule."""
+    assert pyobjc_super_check("macos.menubar"), (
+        "pyobjc-core's Lib/objc/_transform.py would emit ObjCSuperWarning for this module"
+    )
+
+
+def test_the_builtin_super_is_not_used(appkit):
+    """The regression: `super()` resolving to the builtin is what caused the warning."""
+    assert appkit.menubar.super is not builtins.super
+
+
+def test_the_super_binding_is_at_module_level(appkit):
+    """It must be a module global, not something re-bound per call: PyObjC reads
+    ``sys.modules[cls.__module__].super`` long after ``main()`` has returned."""
+    source = MENUBAR.read_text(encoding="utf-8")
+    assert re.search(r"^\s*super = objc\.super\s*$", source, re.M), (
+        "`super = objc.super` must be assigned at module level"
+    )
+
+
+def test_rebinding_super_to_the_builtin_would_fail_the_check(appkit, monkeypatch):
+    """Prove the check above is not vacuous: it must fail if `super` goes back."""
+    monkeypatch.setattr(appkit.menubar, "super", builtins.super)
+    assert not pyobjc_super_check("macos.menubar"), (
+        "the PyObjC check passed with the builtin super - it cannot detect the warning"
+    )
+
+
+def test_the_objc_import_is_guarded_so_the_module_still_imports_without_pyobjc(monkeypatch):
+    """A machine without the macos extra must still be able to import the module and
+    get the friendly 'install PyObjC' message from `_require_appkit`, not an
+    ImportError from `import objc`."""
+    monkeypatch.setitem(sys.modules, "objc", None)  # import objc -> ImportError
+    monkeypatch.delitem(sys.modules, "AppKit", raising=False)
+    sys.modules.pop("macos.menubar", None)
+    try:
+        import macos.menubar as menubar
+
+        assert menubar.objc is None, "without PyObjC the module must not pretend it has it"
+        assert getattr(menubar, "super", builtins.super) is builtins.super, (
+            "no PyObjC, so `super` must not be rebound to objc.super"
+        )
+        # and the friendly failure path must still be reachable
+        with pytest.raises(SystemExit) as excinfo:
+            menubar.main(["ultron"])
+        assert "PyObjC" in str(excinfo.value)
+    finally:
+        sys.modules.pop("macos.menubar", None)
 
 
 # ============================================================ startup behaviour

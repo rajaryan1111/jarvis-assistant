@@ -10,11 +10,12 @@ so a machine without PyObjC is unaffected.
 PyObjC notes that matter here (they are the difference between an app that starts and
 one that dies before its icon appears):
 
-* **Initialisers.** Inside a Python subclass of an Objective-C class, call the
-  superclass initialiser with ``super()``. Objective-C *instance* methods are not
-  reachable through the class object, so ``AppKit.NSObject.init(self)`` passes the
-  receiver as an explicit argument to a selector that takes none and raises
-  ``TypeError: Need 0 arguments, got 1``. That is the crash this module used to have.
+* **Initialisers.** Inside a Python subclass of an Objective-C class, chain to the
+  superclass with ``super()`` — but ``super`` in *this module* must be ``objc.super``,
+  not the builtin (see the import below). Writing
+  ``AppKit.NSObject.init(self)`` instead passes the receiver as an explicit argument to
+  a selector that takes none and raises ``TypeError: Need 0 arguments, got 1``. That is
+  the crash this module used to have.
 * **Weak references.** ``NSApplication.delegate`` and ``NSMenuItem.target`` are
   ``assign``/``weak``. A delegate or target that only exists as a temporary is
   collected by Python and becomes a dangling pointer, so every long-lived Objective-C
@@ -28,6 +29,30 @@ from __future__ import annotations
 import sys
 
 from ultron.tools.process import run_command
+
+try:  # PyObjC: `objc` comes from pyobjc-core, installed together with AppKit
+    import objc
+except ImportError:  # pragma: no cover - a machine without the macos extra
+    objc = None
+
+if objc is not None:
+    # A PyObjC *requirement*, not a style choice.
+    #
+    # pyobjc-core's Lib/objc/_transform.py inspects every class body that uses
+    # zero-argument super() and warns "Objective-C subclass uses super(), but super is
+    # not objc.super" unless `this module's` `super` *is* `objc.super`. It compares by
+    # identity: `module.super is objc.super`.
+    #
+    # The reason is real, not cosmetic. `objc.super` is a subclass of the builtin
+    # `super` that overrides attribute lookup, because the builtin walks the class
+    # __dict__ - and Objective-C *class* methods (+alloc, +separatorItem, ...) live in
+    # the metaclass __dict__, which is not advertised to Python. So the builtin cannot
+    # resolve them, while `objc.super` can.
+    #
+    # Because this shadows the builtin `super` for the whole module, keep `super()`
+    # calls inside Objective-C subclasses only. Every other class in the repository
+    # lives in a different module and is unaffected.
+    super = objc.super
 
 #: Status-bar titles per session state. Short: the menu bar is narrow.
 TITLES = {
@@ -137,10 +162,11 @@ def _run(appkit) -> int:
         """The menu target. Every action is explicit; none runs at startup."""
 
         def init(self):
-            # The PyObjC idiom: super() gives the already-bound superclass
-            # initialiser. Writing `appkit.NSObject.init(self)` instead passes the
-            # receiver as an argument to a selector that takes none, which raises
-            # TypeError and kills the app before the menu-bar icon appears.
+            # PyObjC idiom: `super` is objc.super (see the module import), so this
+            # chains to NSObject's -init through PyObjC's own resolution. Writing
+            # `appkit.NSObject.init(self)` instead passes the receiver as an argument
+            # to a selector that takes none, which raises TypeError and kills the app
+            # before the menu-bar icon appears.
             self = super().init()
             if self is None:
                 return None
