@@ -42,4 +42,16 @@ jobs:
         run: uv run --no-sync python -m ultron check-secrets
 
       - name: Tests
-        run: uv run --no-sync pytest -q
+        run: |
+          set +e
+          uv run --no-sync pytest -q --tb=line > /tmp/pytest.out 2>&1
+          rc=$?
+          # TEMPORARY DIAGNOSTIC: surface the failing tests as annotations so they can
+          # be read through the API. Removed once the cause is known.
+          grep -E "^(FAILED|ERROR)" /tmp/pytest.out | head -8 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+          tail -30 /tmp/pytest.out | grep -vE "^[[:space:]]*$" | head -8 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+          exit $rc
