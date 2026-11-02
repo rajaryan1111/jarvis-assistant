@@ -15,7 +15,7 @@ cannot run is `N/A` with the reason, never a silent pass.
 | 0.2 | `python -m ultron doctor` | `[ok]` for server bind, API token, session state; credentials listed as configured/not set |
 | 0.3 | `python -m ultron token init` then `python -m ultron token init --client` | token files written `0600` under the data directory |
 | 0.4 | `python -m ultron check-secrets` | `No hardcoded credentials found...` |
-| 0.5 | `pytest -q` | `1298 passed, 21 skipped` (the 21 are opt-in live-provider tests) |
+| 0.5 | `pytest -q` | `1313 passed, 21 skipped` (the 21 are opt-in live-provider tests; verify against the current `main` commit) |
 | 0.6 | `python -m ultron agent "what is two plus two"` | a bounded agent turn completes; no tool runs |
 | 0.7 | `./run_jarvis.command` | server binds `127.0.0.1:5001`, `/healthz` answers, HUD opens with a one-time login link |
 
